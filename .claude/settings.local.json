@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(jj status *)",
+      "Bash(cargo fmt *)",
+      "Bash(cargo clippy *)",
+      "Bash(sudo -n true)",
+      "Bash(jj log *)",
+      "Bash(jj bookmark *)",
+      "Bash(gh repo *)",
+      "Bash(jj diff *)",
+      "Bash(jj show *)",
+      "Bash(jj describe *)",
+      "Bash(jj git *)",
+      "Bash(ssh *)"
+    ]
+  }
+}

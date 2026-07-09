@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath' | { read -r f; case \"$f\" in *.rs) rustfmt \"$f\" ;; esac; } 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /home/myar/src/docuflow && OUT=$(cargo check --quiet --message-format=short 2>&1); if [ $? -ne 0 ]; then jq -n --arg msg \"$OUT\" '{\"continue\":false,\"stopReason\":(\"cargo check failed:\\n\"+$msg)}'; else CLOUT=$(cargo clippy --quiet --message-format=short 2>&1); if [ -n \"$CLOUT\" ]; then jq -n --arg msg \"$CLOUT\" '{\"systemMessage\":(\"clippy warnings:\\n\"+$msg)}'; else echo '{}'; fi; fi"
+          }
+        ]
+      }
+    ]
+  }
+}
