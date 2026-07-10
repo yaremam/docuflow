@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}DocuFlow — document intake, handled{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <div>
+    <span class="kicker">Document intake, handled</span>
+    <h1>Drop the paperwork.<br>We'll take it from here.</h1>
+    <p class="lede">DocuFlow scans, tags, and files every bill, policy, and contract you upload — searchable in seconds, isolated per workspace, and traced end-to-end.</p>
+    <div class="cta-row">
+      <a class="btn btn-stamp" href="/signup">Create your workspace</a>
+      <a class="btn btn-outline" href="/login">Log in</a>
+    </div>
+  </div>
+  <div class="hero-panel">
+    <div class="doc-chip"><span>gas_bill_march.pdf</span><span class="status">Filed</span></div>
+    <div class="doc-chip"><span>auto_policy_renewal.pdf</span><span class="status">Filed</span></div>
+    <div class="doc-chip"><span>vendor_contract_v2.pdf</span><span class="status">Scanning&hellip;</span></div>
+  </div>
+</section>
+
+<div class="features">
+  <div class="feature">
+    <span class="f-label">Automatic OCR</span>
+    <p>Every upload is scanned and indexed the moment it lands — no manual tagging queue.</p>
+  </div>
+  <div class="feature">
+    <span class="f-label">Per-workspace isolation</span>
+    <p>Every document, query, and trace is scoped to your workspace. Nothing crosses tenants.</p>
+  </div>
+  <div class="feature">
+    <span class="f-label">Full audit trail</span>
+    <p>Every request is traced end-to-end, so you can see exactly what happened to a document.</p>
+  </div>
+</div>
+{% endblock %}

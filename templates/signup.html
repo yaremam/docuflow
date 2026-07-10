@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %}Create your workspace — DocuFlow{% endblock %}
+
+{% block content %}
+<div class="form-page">
+  <div class="card" data-tab="Signup">
+    <h2>Create your workspace</h2>
+    <p class="card-sub">No credit card. Just paperwork.</p>
+    <form method="post" action="/signup">
+{% include "_credentials_fields.html" %}
+      <button class="btn btn-stamp" type="submit">Create account</button>
+    </form>
+    <p class="swap">Already have a workspace? <a href="/login">Log in</a></p>
+  </div>
+</div>
+{% endblock %}

@@ -1,7 +1,11 @@
 # TDR 000: Endpoint Response and Version Mapping Strategy
 
+> **Revision Note (2026-07-10):** Originally specified `GET /`. The root path was
+> reassigned to the HTML marketing landing page in feature 002, so this endpoint
+> now lives at `GET /health`.
+
 ## 1. Context & Architectural Requirements
-We need to determine the most lightweight and observable way to return a landing response from our Axum server while serving app context metadata.
+We need to determine the most lightweight and observable way to return a health/status response from our Axum server while serving app context metadata.
 
 ## 2. Alternatives Evaluated
 
@@ -14,7 +18,9 @@ We need to determine the most lightweight and observable way to return a landing
 - **Cons:** Marginally higher serialization cost, though completely negligible for our application volume.
 
 ## 3. Structural Decision
-We choose **Alternative B (JSON response matching Cargo constants)** to guarantee our client integrations can programmatically inspect the system state and version numbers.
+We choose **Alternative B (JSON response matching Cargo constants)**, now served at
+`GET /health`, to guarantee our client integrations can programmatically inspect
+the system state and version numbers.
 
 ## 4. OpenTelemetry Implications
 The handler will be annotated with `#[tracing::instrument]`, mapping the request context directly into our Jaeger canvas.

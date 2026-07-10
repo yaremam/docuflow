@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}DocuFlow{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <nav class="page-nav">
+    <a class="brand" href="/">DocuFlow</a>
+    <a class="tab{% if active_tab == "login" %} is-primary{% endif %}" href="/login">Log in</a>
+    <a class="tab{% if active_tab == "signup" %} is-primary{% endif %}" href="/signup">Create workspace</a>
+  </nav>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="site-footer">
+    <span>&copy; DocuFlow</span>
+    <span>Status: healthy</span>
+  </footer>
+</body>
+</html>

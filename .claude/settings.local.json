@@ -12,7 +12,18 @@
       "Bash(jj show *)",
       "Bash(jj describe *)",
       "Bash(jj git *)",
-      "Bash(ssh *)"
+      "Bash(ssh *)",
+      "Bash(tar xzf *)",
+      "Bash(cargo test *)",
+      "Bash(node *)",
+      "Bash(find / -path /proc -prune -o -type d -name \"opentelemetry-otlp-0.14*\" -print)",
+      "Bash(find / -path /proc -prune -o -type d -name \"opentelemetry-0.21*\" -print)",
+      "Bash(find / -path /proc -prune -o -type f -name \"opentelemetry-0.21*.crate\" -print)",
+      "Read(//home/myar/.cargo/registry/cache/**)",
+      "Bash(break)",
+      "Bash(cargo check *)",
+      "Bash(echo \"EXIT_CODE=$?\")",
+      "Bash(pkill -9 -f \"telemetry_bootstrap\\\\|zz_scratch_check\")"
     ]
   }
 }
