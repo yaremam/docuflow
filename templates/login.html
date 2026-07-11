@@ -6,12 +6,15 @@
 <div class="form-page">
   <div class="card" data-tab="Login">
     <h2>Welcome back</h2>
-    <p class="card-sub">Log in to your workspace.</p>
+    <p class="card-sub">Log in to your account.</p>
+    {% if let Some(error) = error %}
+    <p class="form-error">{{ error }}</p>
+    {% endif %}
     <form method="post" action="/login">
 {% include "_credentials_fields.html" %}
       <button class="btn btn-stamp" type="submit">Log in</button>
     </form>
-    <p class="swap">New here? <a href="/signup">Create a workspace</a></p>
+    <p class="swap">New here? <a href="/signup">Sign up</a></p>
   </div>
 </div>
 {% endblock %}

@@ -2,7 +2,8 @@ mod common;
 
 #[tokio::test]
 async fn get_health_returns_json_status() {
-    let response = common::get("/health").await;
+    let app = common::test_state().await;
+    let response = common::get(&app, "/health").await;
 
     assert_eq!(response.status(), axum::http::StatusCode::OK);
     assert!(common::content_type(&response).starts_with("application/json"));

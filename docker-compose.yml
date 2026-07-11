@@ -11,6 +11,11 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d doc_manager_db"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
 
   jaeger:
     image: jaegertracing/all-in-one:latest
@@ -19,6 +24,20 @@ services:
       - "4317:4317"   # OpenTelemetry gRPC порт
     environment:
       - COLLECTOR_OTLP_ENABLED=true
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://admin:secretpassword@postgres:5432/doc_manager_db
+      OTLP_ENDPOINT: http://jaeger:4317
+      PORT: 8081
+    ports:
+      - "8081:8081"
 
 volumes:
   pgdata:

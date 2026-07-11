@@ -2,7 +2,8 @@ mod common;
 
 #[tokio::test]
 async fn get_root_renders_landing_page() {
-    let response = common::get("/").await;
+    let app = common::test_state().await;
+    let response = common::get(&app, "/").await;
 
     assert_eq!(response.status(), axum::http::StatusCode::OK);
     assert!(common::content_type(&response).starts_with("text/html"));

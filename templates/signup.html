@@ -1,17 +1,22 @@
 {% extends "base.html" %}
 
-{% block title %}Create your workspace — DocuFlow{% endblock %}
+{% block title %}Sign up — DocuFlow{% endblock %}
 
 {% block content %}
 <div class="form-page">
   <div class="card" data-tab="Signup">
-    <h2>Create your workspace</h2>
-    <p class="card-sub">No credit card. Just paperwork.</p>
+    <h2>Sign up</h2>
+    <p class="card-sub">No credit card. Just paperwork. You'll get your own
+      private workspace — an isolated space where only you can see your
+      documents.</p>
+    {% if let Some(error) = error %}
+    <p class="form-error">{{ error }}</p>
+    {% endif %}
     <form method="post" action="/signup">
 {% include "_credentials_fields.html" %}
-      <button class="btn btn-stamp" type="submit">Create account</button>
+      <button class="btn btn-stamp" type="submit">Sign up</button>
     </form>
-    <p class="swap">Already have a workspace? <a href="/login">Log in</a></p>
+    <p class="swap">Already have an account? <a href="/login">Log in</a></p>
   </div>
 </div>
 {% endblock %}

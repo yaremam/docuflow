@@ -39,6 +39,7 @@
   --line-light: #c7ced3;
   --stamp-light: #1f6d45;
   --stamp-contrast-light: #f4faf6;
+  --danger-light: #a3312a;
 
   --ink-dark: #e7ebee;
   --ink-soft-dark: #c3ccd4;
@@ -48,6 +49,7 @@
   --line-dark: #2a343d;
   --stamp-dark: #3fae79;
   --stamp-contrast-dark: #0c1712;
+  --danger-dark: #e0736c;
 
   --ink: var(--ink-light);
   --ink-soft: var(--ink-soft-light);
@@ -57,6 +59,7 @@
   --line: var(--line-light);
   --stamp: var(--stamp-light);
   --stamp-contrast: var(--stamp-contrast-light);
+  --danger: var(--danger-light);
   color-scheme: light;
 }
 
@@ -70,6 +73,7 @@
     --line: var(--line-dark);
     --stamp: var(--stamp-dark);
     --stamp-contrast: var(--stamp-contrast-dark);
+    --danger: var(--danger-dark);
     color-scheme: dark;
   }
 }
@@ -82,6 +86,7 @@
   --line: var(--line-dark);
   --stamp: var(--stamp-dark);
   --stamp-contrast: var(--stamp-contrast-dark);
+  --danger: var(--danger-dark);
   color-scheme: dark;
 }
 :root[data-theme="light"] {
@@ -93,6 +98,7 @@
   --line: var(--line-light);
   --stamp: var(--stamp-light);
   --stamp-contrast: var(--stamp-contrast-light);
+  --danger: var(--danger-light);
   color-scheme: light;
 }
 
@@ -300,6 +306,15 @@ a { color: inherit; }
   font-size: 0.82rem;
   margin: 0 0 1.1rem;
 }
+.form-error {
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, var(--paper));
+  border-radius: 4px;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.8rem;
+  margin: 0 0 1.1rem;
+}
 .field { margin-bottom: 0.9rem; }
 .field label {
   display: block;
@@ -323,6 +338,11 @@ a { color: inherit; }
 .field input:focus-visible {
   outline: 2px solid var(--stamp);
   outline-offset: 1px;
+}
+.field-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.74rem;
+  color: var(--slate);
 }
 .card .btn { width: 100%; margin-top: 0.3rem; }
 .card .swap {

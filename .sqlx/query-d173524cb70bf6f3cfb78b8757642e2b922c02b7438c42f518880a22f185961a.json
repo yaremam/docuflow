@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "with ins_tenant as (insert into tenants (id) values ($1)) insert into users (id, tenant_id, email, password_hash) values ($1, $1, $2, $3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d173524cb70bf6f3cfb78b8757642e2b922c02b7438c42f518880a22f185961a"
+}

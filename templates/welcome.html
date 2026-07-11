@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block title %}
+{% if returning %}Welcome back{% else %}You're all set{% endif %} — DocuFlow
+{% endblock %}
+
+{% block content %}
+<div class="form-page">
+  <div class="card">
+    {% if returning %}
+    <h2>Welcome back</h2>
+    <p class="card-sub">You're signed in to DocuFlow.</p>
+    {% else %}
+    <h2>You're all set</h2>
+    <p class="card-sub">Your workspace has been created and you're signed in. A
+      workspace is your private, isolated space for documents — nothing you
+      file here is visible outside it.</p>
+    {% endif %}
+    <p class="swap"><a href="/">Back to the landing page</a></p>
+  </div>
+</div>
+{% endblock %}

@@ -8,17 +8,19 @@ pub struct LandingTemplate {
 #[template(path = "signup.html")]
 pub struct SignupTemplate {
     pub active_tab: &'static str,
+    pub error: Option<&'static str>,
 }
 
 #[derive(askama::Template, askama_web::WebTemplate)]
 #[template(path = "login.html")]
 pub struct LoginTemplate {
     pub active_tab: &'static str,
+    pub error: Option<&'static str>,
 }
 
 #[derive(askama::Template, askama_web::WebTemplate)]
-#[template(path = "coming_soon.html")]
-pub struct ComingSoonTemplate {
-    pub feature_name: &'static str,
+#[template(path = "welcome.html")]
+pub struct WelcomeTemplate {
     pub active_tab: &'static str,
+    pub returning: bool,
 }
