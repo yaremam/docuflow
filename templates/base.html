@@ -9,8 +9,12 @@
 <body>
   <nav class="page-nav">
     <a class="brand" href="/">DocuFlow</a>
+    {% if authenticated %}
+    <a class="tab{% if active_tab == "profile" %} is-primary{% endif %}" href="/profile">Profile</a>
+    {% else %}
     <a class="tab{% if active_tab == "login" %} is-primary{% endif %}" href="/login">Log in</a>
     <a class="tab{% if active_tab == "signup" %} is-primary{% endif %}" href="/signup">Sign up</a>
+    {% endif %}
   </nav>
   <main>
     {% block content %}{% endblock %}

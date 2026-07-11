@@ -38,9 +38,9 @@ pub async fn test_state() -> TestApp {
 
     MIGRATIONS_DONE
         .get_or_init(|| async {
-            state::migrate(&app_state.pool, &session_store)
+            state::migrate(&app_state.pool, &session_store, &app_state.blob)
                 .await
-                .expect("failed to migrate the test database");
+                .expect("failed to migrate the test database or ensure the test bucket exists — is `docker compose up -d` running locally (including `localstack`)?");
         })
         .await;
 
@@ -56,16 +56,29 @@ pub async fn test_state() -> TestApp {
 }
 
 /// Builds a `TestApp` backed by a lazily-connected pool — suitable only for
-/// routes that never touch the database, like static asset serving. Avoids
-/// paying for a live Postgres connection (and the migration/truncate cost
-/// above) for tests that don't need one.
-pub fn lazy_test_app() -> TestApp {
+/// routes that never touch the database (or blob storage), like static asset
+/// serving. Avoids paying for a live Postgres/LocalStack connection (and the
+/// migration/truncate cost above) for tests that don't need one. Building
+/// the S3 client itself makes no network call (it only resolves env-var
+/// credentials), so it's safe to construct here even without LocalStack
+/// running.
+pub async fn lazy_test_app() -> TestApp {
     let pool = sqlx::PgPool::connect_lazy(&database_url())
         .expect("DATABASE_URL should be a valid Postgres connection string");
     let session_store = PostgresStore::new(pool.clone());
     let session_layer = SessionManagerLayer::new(session_store).with_secure(false);
+    let (client, presign_client) = docuflow::blob::clients_from_env().await;
+    let blob = docuflow::blob::BlobStore::new(client, presign_client, "docuflow-uploads-test".to_string());
+    let mailer = docuflow::mailer::Mailer::from_env().expect("mailer config should build from env");
+    let app_base_url =
+        std::env::var("APP_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
     TestApp {
-        state: AppState { pool },
+        state: AppState {
+            pool,
+            blob,
+            mailer,
+            app_base_url,
+        },
         session_layer,
     }
 }
@@ -103,6 +116,14 @@ pub async fn get(test_app: &TestApp, uri: &str) -> axum::http::Response<axum::bo
     request(test_app, "GET", uri, None, None).await
 }
 
+pub async fn get_with_cookie(
+    test_app: &TestApp,
+    uri: &str,
+    cookie: &str,
+) -> axum::http::Response<axum::body::Body> {
+    request(test_app, "GET", uri, Some(cookie), None).await
+}
+
 pub async fn post_form(
     test_app: &TestApp,
     uri: &str,
@@ -111,12 +132,59 @@ pub async fn post_form(
     request(test_app, "POST", uri, None, Some(form_body)).await
 }
 
+pub async fn post_form_with_cookie(
+    test_app: &TestApp,
+    uri: &str,
+    cookie: &str,
+    form_body: &str,
+) -> axum::http::Response<axum::body::Body> {
+    request(test_app, "POST", uri, Some(cookie), Some(form_body)).await
+}
+
 pub async fn post_with_cookie(
     test_app: &TestApp,
     uri: &str,
     cookie: &str,
 ) -> axum::http::Response<axum::body::Body> {
     request(test_app, "POST", uri, Some(cookie), None).await
+}
+
+/// Builds a minimal single-file `multipart/form-data` body — just enough
+/// structure for the one file-upload route this suite tests, not a general
+/// multipart builder.
+fn multipart_body(field_name: &str, filename: &str, content_type: &str, bytes: &[u8]) -> (String, Vec<u8>) {
+    const BOUNDARY: &str = "docuflow-test-boundary";
+    let mut body = Vec::new();
+    body.extend_from_slice(
+        format!(
+            "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{field_name}\"; filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(bytes);
+    body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
+    (format!("multipart/form-data; boundary={BOUNDARY}"), body)
+}
+
+pub async fn post_multipart_with_cookie(
+    test_app: &TestApp,
+    uri: &str,
+    cookie: &str,
+    field_name: &str,
+    filename: &str,
+    content_type: &str,
+    bytes: &[u8],
+) -> axum::http::Response<axum::body::Body> {
+    let (multipart_content_type, body) = multipart_body(field_name, filename, content_type, bytes);
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(axum::http::header::COOKIE, cookie)
+        .header(axum::http::header::CONTENT_TYPE, multipart_content_type)
+        .body(axum::body::Body::from(body))
+        .unwrap();
+
+    app(test_app).oneshot(request).await.unwrap()
 }
 
 /// Posts a `/signup` submission for the given email/password. The only

@@ -17,6 +17,14 @@ pub enum AppWebError {
     Session(#[from] tower_sessions::session::Error),
     #[error("background task error: {0}")]
     TaskJoin(#[from] tokio::task::JoinError),
+    #[error("blob storage error: {0}")]
+    Blob(#[from] crate::blob::BlobError),
+    #[error("multipart error: {0}")]
+    Multipart(#[from] axum::extract::multipart::MultipartError),
+    #[error("mail transport error: {0}")]
+    Mail(String),
+    #[error("this reset link is invalid, expired, or already used")]
+    InvalidResetToken,
     #[error("authentication required")]
     Unauthenticated,
 }
@@ -25,6 +33,18 @@ impl IntoResponse for AppWebError {
     fn into_response(self) -> Response {
         match self {
             AppWebError::Unauthenticated => Redirect::to("/login").into_response(),
+            // `reset_password_form` catches this variant explicitly to
+            // render a friendlier "invalid or expired" template state — this
+            // arm is that path's defense-in-depth fallback, not the primary
+            // one. `reset_password_submit` never produces this variant at
+            // all: it needs to row-lock the token for its update, so it runs
+            // its own `for update` query and renders the equivalent state
+            // directly rather than going through this error type.
+            AppWebError::InvalidResetToken => (
+                StatusCode::BAD_REQUEST,
+                "This reset link is invalid or has expired.",
+            )
+                .into_response(),
             other => {
                 tracing::error!(error = %other, "unhandled web error");
                 (

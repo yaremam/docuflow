@@ -7,16 +7,17 @@ use uuid::Uuid;
 use crate::web::error::AppWebError;
 use crate::web::forms::Credentials;
 use crate::web::state::AppState;
-use crate::web::tenancy::{TenantContext, SESSION_USER_ID_KEY};
+use crate::web::tenancy::{MaybeTenantContext, TenantContext, SESSION_USER_ID_KEY};
 use crate::web::templates::{LoginTemplate, SignupTemplate};
 
 const INVALID_CREDENTIALS: &str = "Invalid email or password.";
 const SIGNUP_FAILED: &str = "We couldn't create that account — check your details and try again.";
 
-#[tracing::instrument]
-pub async fn signup_form() -> SignupTemplate {
+#[tracing::instrument(skip(tenancy))]
+pub async fn signup_form(MaybeTenantContext(tenancy): MaybeTenantContext) -> SignupTemplate {
     SignupTemplate {
         active_tab: "signup",
+        authenticated: tenancy.is_some(),
         error: None,
     }
 }
@@ -68,6 +69,7 @@ pub async fn signup_submit(
             StatusCode::CONFLICT,
             SignupTemplate {
                 active_tab: "signup",
+                authenticated: false,
                 error: Some(SIGNUP_FAILED),
             },
         )
@@ -76,10 +78,11 @@ pub async fn signup_submit(
     }
 }
 
-#[tracing::instrument]
-pub async fn login_form() -> LoginTemplate {
+#[tracing::instrument(skip(tenancy))]
+pub async fn login_form(MaybeTenantContext(tenancy): MaybeTenantContext) -> LoginTemplate {
     LoginTemplate {
         active_tab: "login",
+        authenticated: tenancy.is_some(),
         error: None,
     }
 }
@@ -95,6 +98,7 @@ pub async fn login_submit(
             StatusCode::UNAUTHORIZED,
             LoginTemplate {
                 active_tab: "login",
+                authenticated: false,
                 error: Some(INVALID_CREDENTIALS),
             },
         )

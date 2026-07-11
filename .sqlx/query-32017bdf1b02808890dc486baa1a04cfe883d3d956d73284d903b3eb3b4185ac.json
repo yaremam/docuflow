@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select user_id from password_reset_tokens where token_hash = $1 and used_at is null and expires_at > now() for update",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "32017bdf1b02808890dc486baa1a04cfe883d3d956d73284d903b3eb3b4185ac"
+}

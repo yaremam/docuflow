@@ -1,4 +1,4 @@
-//! Form types for the signup/login flows.
+//! Form types for the signup/login/profile flows.
 //!
 //! The newtypes exist so that PII redaction and minimal structural validation
 //! are enforced at the type level, per CLAUDE.md's type-driven-constraints
@@ -125,3 +125,115 @@ pub struct Credentials {
     pub email: EmailAddress,
     pub password: Password,
 }
+
+/// Shared newtype for the free-text profile fields (name, address
+/// components, phone). Unlike `Password`/`EmailAddress`, none of these
+/// fields have distinct per-field behavior (no hashing, no format grammar),
+/// so one newtype with a generous shared length cap is the pragmatic middle
+/// ground between "raw `String`, no constraint at all" and "seven
+/// near-identical single-field newtypes."
+#[derive(Debug, Default, Clone, serde::Deserialize)]
+#[serde(try_from = "String")]
+pub struct ProfileField(String);
+
+const PROFILE_FIELD_MAX_LEN: usize = 200;
+
+#[derive(Debug, thiserror::Error)]
+#[error("must be at most {PROFILE_FIELD_MAX_LEN} characters")]
+pub struct ProfileFieldError;
+
+impl TryFrom<String> for ProfileField {
+    type Error = ProfileFieldError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let trimmed = value.trim();
+        if trimmed.len() > PROFILE_FIELD_MAX_LEN {
+            Err(ProfileFieldError)
+        } else {
+            Ok(Self(trimmed.to_string()))
+        }
+    }
+}
+
+impl ProfileField {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Blank after trimming means "clear this field" — maps to SQL `null`
+    /// rather than storing an empty string.
+    pub fn into_option(self) -> Option<String> {
+        if self.0.is_empty() {
+            None
+        } else {
+            Some(self.0)
+        }
+    }
+}
+
+/// The editable profile fields, all optional to submit (an absent/blank
+/// field clears that column).
+#[derive(Debug, serde::Deserialize)]
+pub struct ProfileForm {
+    #[serde(default)]
+    pub first_name: ProfileField,
+    #[serde(default)]
+    pub last_name: ProfileField,
+    #[serde(default)]
+    pub street_address: ProfileField,
+    #[serde(default)]
+    pub city: ProfileField,
+    #[serde(default)]
+    pub postcode: ProfileField,
+    #[serde(default)]
+    pub country: ProfileField,
+    #[serde(default)]
+    pub phone: ProfileField,
+}
+
+/// Opaque password-reset token, generated at `/forgot-password` time and
+/// carried in the emailed reset link. Unlike `Password`/`EmailAddress`
+/// there's no grammar to enforce on the way back in — any string that
+/// doesn't match a stored hash simply fails lookup — so this is a plain
+/// wrapper rather than a `TryFrom<String>` newtype, used directly as a
+/// `Form`/`Query` field.
+#[derive(Clone, serde::Deserialize)]
+pub struct ResetToken(String);
+
+impl std::fmt::Debug for ResetToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ResetToken(<redacted>)")
+    }
+}
+
+impl ResetToken {
+    /// Two concatenated v4 UUIDs, hex-encoded — 256 bits of CSPRNG entropy,
+    /// inherently URL-safe. Reuses the `uuid` crate's own OS-RNG-backed
+    /// generator rather than adding a `rand`/`base64` dependency for this
+    /// one call site.
+    pub fn generate() -> Self {
+        let a = uuid::Uuid::new_v4().as_simple().to_string();
+        let b = uuid::Uuid::new_v4().as_simple().to_string();
+        Self(format!("{a}{b}"))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Hex-encoded SHA-256 of the token, for storage/lookup. A fast hash is
+    /// the right choice here — unlike `Password` (a low-entropy, guessable
+    /// human secret that Argon2's deliberate slowness defends against), a
+    /// generated token already has 256 bits of entropy with nothing to
+    /// brute-force; the only real threat is a database leak handing out
+    /// live tokens, which a fast one-way hash defeats just as well as a
+    /// slow one, without taxing every legitimate reset-link click.
+    pub fn hash(&self) -> String {
+        use sha2::Digest;
+        sha2::Sha256::digest(self.0.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+}
+

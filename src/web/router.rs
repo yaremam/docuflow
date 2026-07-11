@@ -1,3 +1,4 @@
+use axum::extract::DefaultBodyLimit;
 use axum::http::header::CACHE_CONTROL;
 use axum::http::HeaderValue;
 use axum::middleware;
@@ -25,6 +26,18 @@ pub fn app(state: AppState, session_layer: SessionManagerLayer<PostgresStore>) -
     // logging — that's a second, cheap extraction, not the auth check).
     let protected = Router::new()
         .route("/logout", post(handlers::auth::logout))
+        .route(
+            "/profile",
+            get(handlers::profile::show).post(handlers::profile::update),
+        )
+        .route(
+            "/profile/picture",
+            post(handlers::profile::upload_picture)
+                // `BlobStore::stream_upload` also enforces this mid-stream —
+                // this layer just rejects an oversized request earlier,
+                // before any of it is read.
+                .layer(DefaultBodyLimit::max(handlers::profile::MAX_PICTURE_BYTES)),
+        )
         .route_layer(middleware::from_extractor::<TenantContext>());
 
     let pages = Router::new()
@@ -38,6 +51,16 @@ pub fn app(state: AppState, session_layer: SessionManagerLayer<PostgresStore>) -
         .route(
             "/login",
             get(handlers::auth::login_form).post(handlers::auth::login_submit),
+        )
+        .route(
+            "/forgot-password",
+            get(handlers::password_reset::forgot_password_form)
+                .post(handlers::password_reset::forgot_password_submit),
+        )
+        .route(
+            "/reset-password",
+            get(handlers::password_reset::reset_password_form)
+                .post(handlers::password_reset::reset_password_submit),
         )
         .merge(protected)
         .layer(TraceLayer::new_for_http())

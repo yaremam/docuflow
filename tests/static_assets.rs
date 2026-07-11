@@ -2,7 +2,7 @@ mod common;
 
 #[tokio::test]
 async fn get_static_stylesheet_is_served() {
-    let app = common::lazy_test_app();
+    let app = common::lazy_test_app().await;
     let response = common::get(&app, "/static/style.css").await;
 
     assert_eq!(response.status(), axum::http::StatusCode::OK);

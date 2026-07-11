@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}Your profile — DocuFlow{% endblock %}
+
+{% block content %}
+<div class="form-page">
+  <div class="card card-wide" data-tab="Profile">
+    <h2>Your profile</h2>
+    <p class="card-sub">This information is private to your workspace.</p>
+    {% if saved %}
+    <p class="form-success">Saved.</p>
+    {% endif %}
+    <div class="avatar-row">
+      <div class="avatar-preview">
+        {% if let Some(url) = picture_url %}
+        <img src="{{ url }}" alt="Your profile picture">
+        {% else %}
+        <span class="avatar-placeholder">No photo yet</span>
+        {% endif %}
+      </div>
+      <form method="post" action="/profile/picture" enctype="multipart/form-data" class="avatar-form">
+        <input id="picture" name="picture" type="file" accept="image/*" required>
+        <button class="btn btn-outline" type="submit">Upload</button>
+      </form>
+    </div>
+    <form method="post" action="/profile">
+      <div class="field-row">
+        <div class="field">
+          <label for="first_name">First name</label>
+          <input id="first_name" name="first_name" type="text" value="{{ first_name }}">
+        </div>
+        <div class="field">
+          <label for="last_name">Last name</label>
+          <input id="last_name" name="last_name" type="text" value="{{ last_name }}">
+        </div>
+      </div>
+      <div class="field">
+        <label for="street_address">Street address</label>
+        <input id="street_address" name="street_address" type="text" value="{{ street_address }}">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="city">City</label>
+          <input id="city" name="city" type="text" value="{{ city }}">
+        </div>
+        <div class="field">
+          <label for="postcode">Postcode</label>
+          <input id="postcode" name="postcode" type="text" value="{{ postcode }}">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="country">Country</label>
+          <input id="country" name="country" type="text" value="{{ country }}">
+        </div>
+        <div class="field">
+          <label for="phone">Phone</label>
+          <input id="phone" name="phone" type="tel" value="{{ phone }}">
+        </div>
+      </div>
+      <button class="btn btn-stamp" type="submit">Save changes</button>
+    </form>
+    <p class="swap"><a href="/">Back to the landing page</a></p>
+  </div>
+</div>
+{% endblock %}

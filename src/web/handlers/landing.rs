@@ -1,11 +1,15 @@
 use axum::extract::Query;
 use serde::Deserialize;
 
+use crate::web::tenancy::MaybeTenantContext;
 use crate::web::templates::{LandingTemplate, WelcomeTemplate};
 
-#[tracing::instrument]
-pub async fn show() -> LandingTemplate {
-    LandingTemplate { active_tab: "" }
+#[tracing::instrument(skip(tenancy))]
+pub async fn show(MaybeTenantContext(tenancy): MaybeTenantContext) -> LandingTemplate {
+    LandingTemplate {
+        active_tab: "",
+        authenticated: tenancy.is_some(),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -14,10 +18,14 @@ pub struct WelcomeQuery {
     returning: bool,
 }
 
-#[tracing::instrument]
-pub async fn welcome(Query(query): Query<WelcomeQuery>) -> WelcomeTemplate {
+#[tracing::instrument(skip(tenancy))]
+pub async fn welcome(
+    MaybeTenantContext(tenancy): MaybeTenantContext,
+    Query(query): Query<WelcomeQuery>,
+) -> WelcomeTemplate {
     WelcomeTemplate {
         active_tab: "",
+        authenticated: tenancy.is_some(),
         returning: query.returning,
     }
 }

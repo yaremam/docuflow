@@ -14,6 +14,10 @@ pub enum AppError {
     Database(#[from] sqlx::Error),
     #[error("database migration error: {0}")]
     Migrate(#[from] sqlx::migrate::MigrateError),
+    #[error("blob storage error: {0}")]
+    Blob(#[from] crate::blob::BlobError),
+    #[error("mail transport error: {0}")]
+    Mail(String),
     #[error("failed to bind listener on {0}: {1}")]
     Bind(SocketAddr, #[source] std::io::Error),
     #[error("HTTP server error: {0}")]

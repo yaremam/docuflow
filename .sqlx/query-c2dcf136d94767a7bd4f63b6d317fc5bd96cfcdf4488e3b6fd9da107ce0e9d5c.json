@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select profile_picture_key from users where email = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "profile_picture_key",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "c2dcf136d94767a7bd4f63b6d317fc5bd96cfcdf4488e3b6fd9da107ce0e9d5c"
+}

@@ -315,6 +315,15 @@ a { color: inherit; }
   font-size: 0.8rem;
   margin: 0 0 1.1rem;
 }
+.form-success {
+  border: 1px solid var(--stamp);
+  color: var(--stamp);
+  background: color-mix(in srgb, var(--stamp) 10%, var(--paper));
+  border-radius: 4px;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.8rem;
+  margin: 0 0 1.1rem;
+}
 .field { margin-bottom: 0.9rem; }
 .field label {
   display: block;
@@ -344,7 +353,64 @@ a { color: inherit; }
   font-size: 0.74rem;
   color: var(--slate);
 }
+.field-row {
+  display: flex;
+  gap: 0.9rem;
+}
+.field-row .field { flex: 1; }
+.avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+  margin-bottom: 1.3rem;
+  padding-bottom: 1.3rem;
+  border-bottom: 1px solid var(--line);
+}
+.avatar-preview {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  overflow: hidden;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.avatar-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.avatar-preview .avatar-placeholder {
+  font-family: 'Fira Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--slate);
+  text-align: center;
+  padding: 0 0.4rem;
+}
+.avatar-form {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.avatar-form input[type="file"] {
+  font-family: 'Fira Sans', sans-serif;
+  font-size: 0.78rem;
+  color: var(--slate);
+  max-width: 180px;
+}
 .card .btn { width: 100%; margin-top: 0.3rem; }
+.avatar-form .btn {
+  width: auto;
+  margin-top: 0;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.78rem;
+}
 .card .swap {
   text-align: center;
   font-size: 0.78rem;
@@ -367,6 +433,7 @@ a { color: inherit; }
   .cta-row { flex-direction: row; flex-wrap: wrap; }
   .form-page { padding: 3rem 1.75rem; }
   .card { max-width: 420px; }
+  .card.card-wide { max-width: 640px; }
 }
 
 /* ---- breakpoint 2: two-column hero, three-column features ---- */
