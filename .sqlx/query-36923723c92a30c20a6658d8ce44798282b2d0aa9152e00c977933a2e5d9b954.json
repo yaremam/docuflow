@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select id, title, original_filename, tags, date_issued, ocr_status, created_at\n                   from documents\n                   where tenant_id = $1 and ($2::text[] is null or tags && $2)\n                   order by created_at asc",
+  "query": "select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at\n                   from documents\n                   where tenant_id = $1 and ($2::text[] is null or tags && $2)\n                   order by date_issued desc nulls last",
   "describe": {
     "columns": [
       {
@@ -20,21 +20,31 @@
       },
       {
         "ordinal": 3,
+        "name": "content_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "blob_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
         "name": "tags",
         "type_info": "TextArray"
       },
       {
-        "ordinal": 4,
+        "ordinal": 6,
         "name": "date_issued",
         "type_info": "Date"
       },
       {
-        "ordinal": 5,
+        "ordinal": 7,
         "name": "ocr_status",
         "type_info": "Text"
       },
       {
-        "ordinal": 6,
+        "ordinal": 8,
         "name": "created_at",
         "type_info": "Timestamptz"
       }
@@ -50,10 +60,12 @@
       true,
       false,
       false,
+      false,
+      false,
       true,
       false,
       false
     ]
   },
-  "hash": "0cb7c975d5b1c7ccc5640228375adb0c448c8bf81fb01a3b78ef2f9f4c87c589"
+  "hash": "36923723c92a30c20a6658d8ce44798282b2d0aa9152e00c977933a2e5d9b954"
 }

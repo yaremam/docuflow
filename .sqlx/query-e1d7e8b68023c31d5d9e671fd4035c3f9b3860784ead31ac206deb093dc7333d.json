@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select id, title, original_filename, tags, date_issued, ocr_status, created_at\n                   from documents\n                   where tenant_id = $1 and ($2::text[] is null or tags && $2)\n                   order by date_issued asc nulls last",
+  "query": "select id, title, original_filename, content_type, file_size_bytes, blob_key, tags, date_issued, ocr_status, ocr_text, created_at\n           from documents\n           where id = $1 and tenant_id = $2",
   "describe": {
     "columns": [
       {
@@ -20,21 +20,41 @@
       },
       {
         "ordinal": 3,
-        "name": "tags",
-        "type_info": "TextArray"
+        "name": "content_type",
+        "type_info": "Text"
       },
       {
         "ordinal": 4,
-        "name": "date_issued",
-        "type_info": "Date"
+        "name": "file_size_bytes",
+        "type_info": "Int8"
       },
       {
         "ordinal": 5,
-        "name": "ocr_status",
+        "name": "blob_key",
         "type_info": "Text"
       },
       {
         "ordinal": 6,
+        "name": "tags",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 7,
+        "name": "date_issued",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 8,
+        "name": "ocr_status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "ocr_text",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamptz"
       }
@@ -42,7 +62,7 @@
     "parameters": {
       "Left": [
         "Uuid",
-        "TextArray"
+        "Uuid"
       ]
     },
     "nullable": [
@@ -50,10 +70,14 @@
       true,
       false,
       false,
+      false,
+      false,
+      false,
       true,
       false,
+      true,
       false
     ]
   },
-  "hash": "225d774935974b5cb983b67e9ef805f5691a700cf1154982ee7981132166099a"
+  "hash": "e1d7e8b68023c31d5d9e671fd4035c3f9b3860784ead31ac206deb093dc7333d"
 }

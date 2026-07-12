@@ -18,9 +18,19 @@
   {% endif %}
   <div class="detail-grid">
     <div class="detail-text">
-      <div class="card" data-tab="Extracted text">
+      <div class="card" data-tab="Original file">
         <h2>{{ title }}</h2>
         <p class="card-sub">{{ original_filename }} &middot; {{ file_size_bytes }} bytes &middot; uploaded {{ uploaded_at }}</p>
+        {% if is_image %}
+        <div class="detail-preview-frame is-image"><img src="{{ file_url }}" alt="Preview of the uploaded document"></div>
+        {% else %}
+        <div class="detail-preview-frame is-pdf">
+          <embed type="application/pdf" src="{{ file_url }}">
+          <a class="detail-preview-open" href="{{ file_url }}" target="_blank" rel="noopener">Open in new tab &rarr;</a>
+        </div>
+        {% endif %}
+      </div>
+      <div class="card" data-tab="Extracted text">
         {% if let Some(ocr_text) = ocr_text %}
         <div class="detail-text-box">{{ ocr_text }}</div>
         {% else if ocr_status == "failed" %}

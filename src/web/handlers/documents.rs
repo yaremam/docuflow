@@ -33,6 +33,23 @@ fn format_date(date: time::Date) -> String {
     format!("{:04}-{:02}-{:02}", date.year(), date.month() as u8, date.day())
 }
 
+/// A presigned view URL plus whether the browser can inline it as an
+/// `<img>` (vs. needing a PDF `<embed>`) — shared by `list` and `show` since
+/// both render a preview from the same `blob_key`/`content_type` pair.
+/// Reuses `OCR_ELIGIBLE_CONTENT_TYPES` for the image check: that constant is
+/// named for OCR eligibility, but today's four image types are exactly the
+/// set a browser can inline too, so it doubles as the "is this an image"
+/// answer without a second, parallel list to keep in sync.
+async fn document_preview(
+    blob: &crate::blob::BlobStore,
+    blob_key: &str,
+    content_type: &str,
+) -> Result<(String, bool), AppWebError> {
+    let file_url = blob.presigned_get_url(blob_key).await?;
+    let is_image = OCR_ELIGIBLE_CONTENT_TYPES.contains(&content_type);
+    Ok((file_url, is_image))
+}
+
 #[derive(Debug, Clone, Copy)]
 enum Sort {
     CreatedAtDesc,
@@ -86,6 +103,8 @@ struct DocumentListRow {
     id: Uuid,
     title: Option<String>,
     original_filename: String,
+    content_type: String,
+    blob_key: String,
     tags: Vec<String>,
     date_issued: Option<time::Date>,
     ocr_status: String,
@@ -118,7 +137,7 @@ pub async fn list(
         Sort::CreatedAtDesc => {
             sqlx::query_as!(
                 DocumentListRow,
-                r#"select id, title, original_filename, tags, date_issued, ocr_status, created_at
+                r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at
                    from documents
                    where tenant_id = $1 and ($2::text[] is null or tags && $2)
                    order by created_at desc"#,
@@ -131,7 +150,7 @@ pub async fn list(
         Sort::CreatedAtAsc => {
             sqlx::query_as!(
                 DocumentListRow,
-                r#"select id, title, original_filename, tags, date_issued, ocr_status, created_at
+                r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at
                    from documents
                    where tenant_id = $1 and ($2::text[] is null or tags && $2)
                    order by created_at asc"#,
@@ -144,7 +163,7 @@ pub async fn list(
         Sort::DateIssuedDesc => {
             sqlx::query_as!(
                 DocumentListRow,
-                r#"select id, title, original_filename, tags, date_issued, ocr_status, created_at
+                r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at
                    from documents
                    where tenant_id = $1 and ($2::text[] is null or tags && $2)
                    order by date_issued desc nulls last"#,
@@ -157,7 +176,7 @@ pub async fn list(
         Sort::DateIssuedAsc => {
             sqlx::query_as!(
                 DocumentListRow,
-                r#"select id, title, original_filename, tags, date_issued, ocr_status, created_at
+                r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at
                    from documents
                    where tenant_id = $1 and ($2::text[] is null or tags && $2)
                    order by date_issued asc nulls last"#,
@@ -170,7 +189,7 @@ pub async fn list(
         Sort::TagsAsc => {
             sqlx::query_as!(
                 DocumentListRow,
-                r#"select id, title, original_filename, tags, date_issued, ocr_status, created_at
+                r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at
                    from documents
                    where tenant_id = $1 and ($2::text[] is null or tags && $2)
                    order by array_to_string(tags, ',') asc"#,
@@ -182,18 +201,21 @@ pub async fn list(
         }
     };
 
-    let documents = rows
-        .into_iter()
-        .map(|row| DocumentListItem {
+    let mut documents = Vec::new();
+    for row in rows {
+        let (file_url, is_image) = document_preview(&state.blob, &row.blob_key, &row.content_type).await?;
+        documents.push(DocumentListItem {
             id: row.id,
             title: row.title.unwrap_or_else(|| row.original_filename.clone()),
             original_filename: row.original_filename,
+            file_url,
+            is_image,
             tags: row.tags,
             date_issued: row.date_issued.map(format_date),
             uploaded_at: format_date(row.created_at.date()),
             ocr_status: row.ocr_status,
-        })
-        .collect();
+        });
+    }
 
     Ok(DocumentsListTemplate {
         active_tab: "documents",
@@ -211,6 +233,7 @@ struct DocumentRow {
     original_filename: String,
     content_type: String,
     file_size_bytes: i64,
+    blob_key: String,
     tags: Vec<String>,
     date_issued: Option<time::Date>,
     ocr_status: String,
@@ -237,7 +260,7 @@ pub async fn show(
 
     let row = sqlx::query_as!(
         DocumentRow,
-        r#"select id, title, original_filename, content_type, file_size_bytes, tags, date_issued, ocr_status, ocr_text, created_at
+        r#"select id, title, original_filename, content_type, file_size_bytes, blob_key, tags, date_issued, ocr_status, ocr_text, created_at
            from documents
            where id = $1 and tenant_id = $2"#,
         id,
@@ -246,6 +269,8 @@ pub async fn show(
     .fetch_optional(&state.pool)
     .await?
     .ok_or(AppWebError::NotFound)?;
+
+    let (file_url, is_image) = document_preview(&state.blob, &row.blob_key, &row.content_type).await?;
 
     Ok(DocumentShowTemplate {
         active_tab: "documents",
@@ -258,6 +283,8 @@ pub async fn show(
         original_filename: row.original_filename,
         content_type: row.content_type,
         file_size_bytes: row.file_size_bytes,
+        file_url,
+        is_image,
         tags_input_value: row.tags.join(", "),
         date_issued_input_value: row.date_issued.map(format_date).unwrap_or_default(),
         uploaded_at: format_date(row.created_at.date()),

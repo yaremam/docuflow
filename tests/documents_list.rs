@@ -16,16 +16,30 @@ async fn seed_document(
     date_issued: Option<time::Date>,
     created_at: time::OffsetDateTime,
 ) -> uuid::Uuid {
+    seed_document_with_content_type(pool, user_id, filename, "application/pdf", tags, date_issued, created_at).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn seed_document_with_content_type(
+    pool: &sqlx::PgPool,
+    user_id: uuid::Uuid,
+    filename: &str,
+    content_type: &str,
+    tags: &[&str],
+    date_issued: Option<time::Date>,
+    created_at: time::OffsetDateTime,
+) -> uuid::Uuid {
     let id = uuid::Uuid::new_v4();
     let tags: Vec<String> = tags.iter().map(|tag| tag.to_string()).collect();
     let blob_key = format!("documents/{user_id}/{id}");
     sqlx::query!(
         "insert into documents
             (id, tenant_id, user_id, original_filename, content_type, file_size_bytes, blob_key, tags, date_issued, ocr_status, created_at)
-         values ($1, $2, $2, $3, 'application/pdf', 100, $4, $5, $6, 'done', $7)",
+         values ($1, $2, $2, $3, $4, 100, $5, $6, $7, 'done', $8)",
         id,
         user_id,
         filename,
+        content_type,
         blob_key,
         &tags,
         date_issued,
@@ -133,4 +147,35 @@ async fn sort_by_date_issued_orders_documents_correctly() {
     let earliest_pos = body.find("earliest.pdf").expect("earliest.pdf should be present");
     let latest_pos = body.find("latest.pdf").expect("latest.pdf should be present");
     assert!(earliest_pos < latest_pos, "date_issued_asc should list the earlier issue date first");
+}
+
+#[tokio::test]
+async fn list_rows_show_an_image_thumbnail_and_a_pdf_badge() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "thumbs.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "thumbs.docs@example.com").await;
+
+    seed_document_with_content_type(
+        &app.state.pool,
+        user,
+        "electric.jpg",
+        "image/jpeg",
+        &["utilities"],
+        None,
+        datetime(2026, 1, 1),
+    )
+    .await;
+    seed_document(&app.state.pool, user, "policy.pdf", &["insurance"], None, datetime(2026, 1, 2)).await;
+
+    let response = common::get_with_cookie(&app, "/documents", &cookie).await;
+
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = common::body_string(response).await;
+    assert!(body.contains("<img"), "expected an <img> thumbnail for the image document, got: {body}");
+    assert!(
+        body.contains("X-Amz-Signature"),
+        "expected the thumbnail to use a presigned blob URL, got: {body}"
+    );
+    assert!(body.contains("doc-thumb-pdf"), "expected a PDF badge for the PDF document, got: {body}");
 }

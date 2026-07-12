@@ -37,29 +37,39 @@
   <div class="doc-list">
     {% for doc in documents %}
     <a class="doc-row" href="/documents/{{ doc.id }}">
-      <div class="doc-row-top">
-        <span class="doc-row-title">{{ doc.title }}</span>
-        {% if doc.ocr_status == "done" %}
-        <span class="status">Text ready</span>
-        {% else if doc.ocr_status == "failed" %}
-        <span class="status pending">Processing failed</span>
-        {% else if doc.ocr_status == "skipped" %}
-        <span class="status pending">No text</span>
-        {% else %}
-        <span class="status pending">Processing&hellip;</span>
-        {% endif %}
+      {% if doc.is_image %}
+      <div class="doc-thumb"><img src="{{ doc.file_url }}" alt=""></div>
+      {% else %}
+      <div class="doc-thumb doc-thumb-pdf">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 2h9l5 5v15H6z"></path><path d="M15 2v5h5"></path></svg>
+        <span>PDF</span>
       </div>
-      <div class="doc-row-filename">{{ doc.original_filename }}</div>
-      <div class="doc-row-meta">
-        {% for tag in doc.tags %}
-        <span class="tag-chip">{{ tag }}</span>
-        {% endfor %}
-        <span class="doc-row-dates">
-          {% if let Some(date_issued) = doc.date_issued %}
-          Issued {{ date_issued }} &middot;
+      {% endif %}
+      <div class="doc-row-body">
+        <div class="doc-row-top">
+          <span class="doc-row-title">{{ doc.title }}</span>
+          {% if doc.ocr_status == "done" %}
+          <span class="status">Text ready</span>
+          {% else if doc.ocr_status == "failed" %}
+          <span class="status pending">Processing failed</span>
+          {% else if doc.ocr_status == "skipped" %}
+          <span class="status pending">No text</span>
+          {% else %}
+          <span class="status pending">Processing&hellip;</span>
           {% endif %}
-          Uploaded {{ doc.uploaded_at }}
-        </span>
+        </div>
+        <div class="doc-row-filename">{{ doc.original_filename }}</div>
+        <div class="doc-row-meta">
+          {% for tag in doc.tags %}
+          <span class="tag-chip">{{ tag }}</span>
+          {% endfor %}
+          <span class="doc-row-dates">
+            {% if let Some(date_issued) = doc.date_issued %}
+            Issued {{ date_issued }} &middot;
+            {% endif %}
+            Uploaded {{ doc.uploaded_at }}
+          </span>
+        </div>
       </div>
     </a>
     {% endfor %}
