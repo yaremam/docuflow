@@ -113,6 +113,12 @@ pub struct DocumentShowTemplate {
     pub is_image: bool,
     pub tags_input_value: String,
     pub date_issued_input_value: String,
+    /// `Some(formatted date)` only when OCR found a plausible issued date
+    /// *and* `date_issued` is still empty — `None` covers both "no
+    /// suggestion was found" and "a date is already set," so the template
+    /// only needs one condition to decide whether to show the suggestion
+    /// box (see TDR 012).
+    pub suggested_date_issued_display: Option<String>,
     pub uploaded_at: String,
     pub ocr_status: String,
     pub ocr_text: Option<String>,

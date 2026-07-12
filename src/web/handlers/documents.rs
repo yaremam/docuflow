@@ -251,6 +251,7 @@ struct DocumentRow {
     blob_key: String,
     tags: Vec<String>,
     date_issued: Option<time::Date>,
+    ocr_suggested_date_issued: Option<time::Date>,
     ocr_status: String,
     ocr_text: Option<String>,
     created_at: time::OffsetDateTime,
@@ -275,7 +276,8 @@ pub async fn show(
 
     let row = sqlx::query_as!(
         DocumentRow,
-        r#"select id, title, original_filename, content_type, file_size_bytes, blob_key, tags, date_issued, ocr_status, ocr_text, created_at
+        r#"select id, title, original_filename, content_type, file_size_bytes, blob_key, tags, date_issued,
+                  ocr_suggested_date_issued, ocr_status, ocr_text, created_at
            from documents
            where id = $1 and tenant_id = $2"#,
         id,
@@ -286,6 +288,11 @@ pub async fn show(
     .ok_or(AppWebError::NotFound)?;
 
     let (file_url, is_image) = document_preview(&state.blob, &row.blob_key, &row.content_type).await?;
+    // Only surfaced when there's nothing already in `date_issued` — a
+    // suggestion never contends with, or gets confused for, a value the
+    // user already set (see TDR 012).
+    let suggested_date_issued_display =
+        if row.date_issued.is_none() { row.ocr_suggested_date_issued.map(format_date) } else { None };
 
     Ok(DocumentShowTemplate {
         active_tab: "documents",
@@ -302,6 +309,7 @@ pub async fn show(
         is_image,
         tags_input_value: row.tags.join(", "),
         date_issued_input_value: row.date_issued.map(format_date).unwrap_or_default(),
+        suggested_date_issued_display,
         uploaded_at: format_date(row.created_at.date()),
         ocr_status: row.ocr_status,
         ocr_text: row.ocr_text,
@@ -339,6 +347,50 @@ pub async fn update(
 
     if result.rows_affected() == 0 {
         return Err(AppWebError::NotFound);
+    }
+
+    Ok(Redirect::to(&format!("/documents/{id}?saved=true")).into_response())
+}
+
+/// Copies `ocr_suggested_date_issued` into `date_issued` — the "Use this
+/// date" action from the suggestion box `show` renders (see TDR 012). The
+/// `where date_issued is null` guard means this is safe to call even if
+/// the suggestion no longer applies (already accepted, or `date_issued`
+/// was set some other way since): it's just a no-op, not an error. That
+/// guard is also why this can't use `update`'s plain `rows_affected() ==
+/// 0` idiom directly: 0 rows affected here is ambiguous between "document
+/// doesn't exist" (404) and "exists, but the guard didn't match" (no-op)
+/// — so the existence check only runs as a fallback on that path, keeping
+/// the common (successful-accept) case down to one round-trip like every
+/// other handler in this file.
+#[tracing::instrument(skip(state, tenancy))]
+pub async fn accept_suggested_date(
+    tenancy: TenantContext,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, AppWebError> {
+    let result = sqlx::query!(
+        "update documents set date_issued = ocr_suggested_date_issued, updated_at = now()
+         where id = $1 and tenant_id = $2 and date_issued is null",
+        id,
+        tenancy.tenant_id.0,
+    )
+    .execute(&state.pool)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        let exists = sqlx::query_scalar!(
+            "select exists(select 1 from documents where id = $1 and tenant_id = $2)",
+            id,
+            tenancy.tenant_id.0,
+        )
+        .fetch_one(&state.pool)
+        .await?
+        .unwrap_or(false);
+
+        if !exists {
+            return Err(AppWebError::NotFound);
+        }
     }
 
     Ok(Redirect::to(&format!("/documents/{id}?saved=true")).into_response())
@@ -470,11 +522,14 @@ async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: 
 
     let update_result = match outcome {
         Ok(text) => {
+            let suggested_date_issued = crate::date_extract::extract_issued_date(&text);
             sqlx::query!(
-                "update documents set ocr_status = 'done', ocr_text = $3 where id = $1 and tenant_id = $2",
+                "update documents set ocr_status = 'done', ocr_text = $3, ocr_suggested_date_issued = $4
+                 where id = $1 and tenant_id = $2",
                 document_id,
                 tenant_id,
                 text,
+                suggested_date_issued,
             )
             .execute(&state.pool)
             .await

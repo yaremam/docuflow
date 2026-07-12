@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update documents set ocr_status = 'done', ocr_text = $3, ocr_suggested_date_issued = $4\n                 where id = $1 and tenant_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Date"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "17633150163fb4789987d3553093b74c2828d6fac0e66eb927858ce330e0edcb"
+}

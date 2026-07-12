@@ -403,6 +403,7 @@ pub struct OcrOutcome {
     pub status: String,
     pub text: Option<String>,
     pub error: Option<String>,
+    pub suggested_date_issued: Option<time::Date>,
 }
 
 /// Polls `documents.ocr_status` for `id` until it reaches a terminal state
@@ -415,14 +416,69 @@ pub struct OcrOutcome {
 pub async fn wait_for_ocr_outcome(app: &TestApp, id: uuid::Uuid, timeout: std::time::Duration) -> OcrOutcome {
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
-        let row = sqlx::query!("select ocr_status, ocr_text, ocr_error from documents where id = $1", id)
-            .fetch_one(&app.state.pool)
-            .await
-            .unwrap();
+        let row = sqlx::query!(
+            "select ocr_status, ocr_text, ocr_error, ocr_suggested_date_issued from documents where id = $1",
+            id
+        )
+        .fetch_one(&app.state.pool)
+        .await
+        .unwrap();
         if row.ocr_status == "done" || row.ocr_status == "failed" {
-            return OcrOutcome { status: row.ocr_status, text: row.ocr_text, error: row.ocr_error };
+            return OcrOutcome {
+                status: row.ocr_status,
+                text: row.ocr_text,
+                error: row.ocr_error,
+                suggested_date_issued: row.ocr_suggested_date_issued,
+            };
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    OcrOutcome { status: String::new(), text: None, error: None }
+    OcrOutcome { status: String::new(), text: None, error: None, suggested_date_issued: None }
+}
+
+/// Extracts the document id out of a `/documents/{id}?...` redirect
+/// Location header. Shared by every test file that uploads a document and
+/// then needs its id (the upload response only returns a redirect, never
+/// the id directly).
+pub fn document_id_from_location(location: &str) -> uuid::Uuid {
+    let after_prefix = location.strip_prefix("/documents/").expect("redirect should target /documents/{id}");
+    let id_str = after_prefix.split('?').next().unwrap();
+    id_str.parse().expect("redirect should contain a valid document id")
+}
+
+pub struct UploadedDocument {
+    pub id: uuid::Uuid,
+    pub cookie: String,
+    pub outcome: OcrOutcome,
+}
+
+/// Shared by every real-OCR test (image, PDF, Cyrillic, dated): signs up a
+/// fresh user, uploads `fixture_path` under `filename`/`content_type`, and
+/// polls until OCR reaches a terminal state. Returns the new document's id
+/// and the uploader's session cookie alongside the outcome, for tests that
+/// need to keep interacting with it (viewing/editing the page) after OCR
+/// completes.
+pub async fn upload_and_wait_for_ocr(
+    app: &TestApp,
+    email: &str,
+    fixture_path: &str,
+    filename: &str,
+    content_type: &str,
+) -> UploadedDocument {
+    let login = signup_and_login(app, email, "documentspassword").await;
+    let cookie = session_cookie(&login).expect("login should set a session cookie");
+
+    let bytes = std::fs::read(fixture_path).unwrap();
+    let response = post_multipart_parts_with_cookie(
+        app,
+        "/documents",
+        &cookie,
+        &[MultipartPart::File { name: "file", filename, content_type, bytes: &bytes }],
+    )
+    .await;
+    assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
+    let id = document_id_from_location(&location(&response).unwrap());
+
+    let outcome = wait_for_ocr_outcome(app, id, std::time::Duration::from_secs(15)).await;
+    UploadedDocument { id, cookie, outcome }
 }

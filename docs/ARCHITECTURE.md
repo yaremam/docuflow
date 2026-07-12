@@ -178,6 +178,7 @@ erDiagram
         text blob_key
         text_array tags
         date date_issued
+        date ocr_suggested_date_issued "feature 012, nullable"
         text ocr_status "pending|processing|done|failed|skipped"
         text ocr_text
         text ocr_error
@@ -214,7 +215,9 @@ Notes:
   feature 010, `application/pdf`) go through `'pending'` → `'processing'`
   → `'done'`/`'failed'`; `'skipped'` is now only a historical value for
   PDF rows uploaded before feature 010 shipped (never assigned to new
-  uploads).
+  uploads). `ocr_suggested_date_issued` (feature 012) is written
+  alongside `ocr_text` on a successful OCR pass, independent of
+  `date_issued` — see TDR 012 and §7 below.
 - `scan_sessions` (feature 009) follows `password_reset_tokens`'s shape —
   only `token_hash` is ever persisted, never the raw token embedded in the
   QR code. Unlike `password_reset_tokens`, expiry (`expires_at`, a fixed
@@ -315,6 +318,7 @@ first.
 
 | Feature | TDR | Chosen approach | Why (one line) |
 |---|---|---|---|
+| OCR-based issued-date suggestion | [012](tdr/012_ocr_issued_date_suggestion_design.md) | Regex-based scan of `ocr_text` for ISO/month-name/numeric date shapes; stored in its own `ocr_suggested_date_issued` column, surfaced as an explicit-accept "Use this date" action | Keeps "what OCR found" and "what the user confirmed" strictly separate — a wrong guess never lands in `date_issued` silently |
 | Cyrillic OCR support | [011](tdr/011_cyrillic_ocr_design.md) | Always run `tesseract -l eng+rus` (multi-language mode), no document-language field | Tesseract's multi-language mode already picks the right script per block internally; no detection step or per-document metadata needed |
 | PDF OCR | [010](tdr/010_pdf_ocr_design.md) | Shell out to `pdftoppm` (poppler-utils) to rasterize each page, then run the existing `tesseract` image-OCR path per page | Stays consistent with the `tesseract` precedent (CLI tool over native-library binding); avoids a second, inconsistent way of vendoring a native PDF dependency |
 | Phone-camera scan handoff | [009](tdr/009_phone_camera_scan_design.md) | Single-use hashed `scan_sessions` token in a QR code; native `<input capture>` on the phone, not WebRTC; `<meta refresh>` polling, not JS | No new client-side JS anywhere in the app; reuses the `password_reset_tokens` token pattern and the OCR-status `<meta refresh>` idiom instead of inventing new ones |
@@ -339,12 +343,21 @@ gaps:
 - **Multi-user tenants** (invite flow, membership roles) — schema/types
   already distinguish `TenantId`/`UserId` in anticipation, but no UI or
   membership table exists.
-- **Retroactive OCR reprocessing** — documents OCR'd (or skipped) before
-  a pipeline improvement ships — feature 010's PDF support, feature 011's
-  Cyrillic support — keep whatever `ocr_status`/`ocr_text` they already
-  have; they are not automatically re-queued through the improved
-  pipeline. Folds into the OCR retry item above once that exists.
+- **Retroactive OCR reprocessing** — documents OCR'd (or skipped) before a
+  pipeline improvement ships — feature 010's PDF support, feature 011's
+  Cyrillic support, feature 012's issued-date suggestion — keep whatever
+  `ocr_status`/`ocr_text`/`ocr_suggested_date_issued` they already have;
+  they are not automatically re-queued through the improved pipeline.
+  This is the "redo the OCR" backlog item, and folds into the OCR retry
+  item above once that exists.
 - **Document-language field / language auto-detection** — feature 011
   always runs `tesseract -l eng+rus` unconditionally rather than knowing
   or asking a document's language; a compulsory language metadata field
   with automatic recognition is a separate, not-yet-built backlog item.
+- **EXIF-based issued-date suggestion** — feature 012 only mines OCR
+  text; suggesting a date from an image's EXIF metadata is a separately-
+  tracked backlog item with its own data source and design.
+- **Non-English month names in date extraction** — feature 012's
+  `date_extract.rs` recognizes English month names and numeric/ISO
+  shapes only, even though feature 011 added Cyrillic OCR; Cyrillic (or
+  other non-English) month names are not yet recognized.

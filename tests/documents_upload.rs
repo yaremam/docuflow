@@ -41,42 +41,6 @@ async fn document_count_for_tenant(app: &common::TestApp, tenant_id: uuid::Uuid)
         .unwrap_or(0)
 }
 
-/// Extracts the document id out of a `/documents/{id}?...` redirect
-/// Location header.
-fn document_id_from_location(location: &str) -> uuid::Uuid {
-    let after_prefix = location.strip_prefix("/documents/").expect("redirect should target /documents/{id}");
-    let id_str = after_prefix.split('?').next().unwrap();
-    id_str.parse().expect("redirect should contain a valid document id")
-}
-
-/// Shared by the real-OCR tests below (image, PDF, Cyrillic): signs up a
-/// fresh user, uploads `fixture_path` under `filename`/`content_type`, and
-/// polls until OCR reaches a terminal state. Callers only need to vary the
-/// fixture and the text they expect to find in it.
-async fn upload_and_wait_for_ocr(
-    app: &common::TestApp,
-    email: &str,
-    fixture_path: &str,
-    filename: &str,
-    content_type: &str,
-) -> common::OcrOutcome {
-    let login = common::signup_and_login(app, email, "documentspassword").await;
-    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
-
-    let bytes = std::fs::read(fixture_path).unwrap();
-    let response = common::post_multipart_parts_with_cookie(
-        app,
-        "/documents",
-        &cookie,
-        &[MultipartPart::File { name: "file", filename, content_type, bytes: &bytes }],
-    )
-    .await;
-    assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
-    let id = document_id_from_location(&common::location(&response).unwrap());
-
-    common::wait_for_ocr_outcome(app, id, std::time::Duration::from_secs(15)).await
-}
-
 #[tokio::test]
 async fn successful_image_upload_creates_row_and_redirects() {
     let app = common::test_state().await;
@@ -106,7 +70,7 @@ async fn successful_image_upload_creates_row_and_redirects() {
     assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
     let location = common::location(&response).expect("upload should redirect");
     assert!(location.ends_with("?uploaded=true"));
-    let id = document_id_from_location(&location);
+    let id = common::document_id_from_location(&location);
 
     let row = find_document(&app, id).await.expect("row should exist");
     assert_eq!(row.tenant_id, user);
@@ -191,7 +155,7 @@ async fn pdf_upload_is_ocr_eligible_not_skipped() {
     .await;
 
     assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
-    let id = document_id_from_location(&common::location(&response).unwrap());
+    let id = common::document_id_from_location(&common::location(&response).unwrap());
     let row = find_document(&app, id).await.expect("row should exist");
     assert!(
         row.ocr_status == "pending" || row.ocr_status == "processing" || row.ocr_status == "done" || row.ocr_status == "failed",
@@ -224,7 +188,7 @@ async fn corrupt_pdf_fails_ocr_gracefully_instead_of_panicking() {
     )
     .await;
     assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
-    let id = document_id_from_location(&common::location(&response).unwrap());
+    let id = common::document_id_from_location(&common::location(&response).unwrap());
 
     let outcome = common::wait_for_ocr_outcome(&app, id, std::time::Duration::from_secs(15)).await;
     assert_eq!(outcome.status, "failed", "an unrasterizable pdf should end up failed, not stuck or panicking");
@@ -341,8 +305,9 @@ async fn image_upload_is_actually_ocrd_by_tesseract() {
 
     let app = common::test_state().await;
     let outcome =
-        upload_and_wait_for_ocr(&app, "realocr.docs@example.com", "tests/fixtures/ocr_sample.png", "ocr_sample.png", "image/png")
-            .await;
+        common::upload_and_wait_for_ocr(&app, "realocr.docs@example.com", "tests/fixtures/ocr_sample.png", "ocr_sample.png", "image/png")
+            .await
+            .outcome;
     assert_eq!(outcome.status, "done", "ocr should complete within the timeout");
     assert!(
         outcome.text.as_deref().unwrap_or("").contains("DOCUFLOW OCR SAMPLE"),
@@ -363,14 +328,15 @@ async fn cyrillic_image_upload_is_correctly_ocrd() {
     }
 
     let app = common::test_state().await;
-    let outcome = upload_and_wait_for_ocr(
+    let outcome = common::upload_and_wait_for_ocr(
         &app,
         "cyrillicocr.docs@example.com",
         "tests/fixtures/cyrillic_sample.png",
         "cyrillic_sample.png",
         "image/png",
     )
-    .await;
+    .await
+    .outcome;
     assert_eq!(outcome.status, "done", "ocr should complete within the timeout");
     assert!(
         outcome.text.as_deref().unwrap_or("").contains("ДОКУФЛОВ"),
@@ -387,14 +353,15 @@ async fn pdf_upload_is_rasterized_and_ocrd_by_tesseract() {
     }
 
     let app = common::test_state().await;
-    let outcome = upload_and_wait_for_ocr(
+    let outcome = common::upload_and_wait_for_ocr(
         &app,
         "realpdfocr.docs@example.com",
         "tests/fixtures/ocr_sample.pdf",
         "ocr_sample.pdf",
         "application/pdf",
     )
-    .await;
+    .await
+    .outcome;
     assert_eq!(outcome.status, "done", "pdf ocr should complete within the timeout, got text: {:?}", outcome.text);
     assert!(
         outcome.text.as_deref().unwrap_or("").contains("DOCUFLOW OCR SAMPLE PDF"),

@@ -107,7 +107,11 @@
       "Bash(tesseract /tmp/claude-1000/-home-myar-src-docuflow/f7998b0e-318e-47f1-9c3e-7046d5865539/scratchpad/cyrillic.png stdout -l eng)",
       "Bash(docker run *)",
       "Skill(simplify)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(google-chrome --headless --disable-gpu --no-sandbox --screenshot=/tmp/claude-1000/-home-myar-src-docuflow/f7998b0e-318e-47f1-9c3e-7046d5865539/scratchpad/dated_sample.png --window-size=900,260 file:///tmp/claude-1000/-home-myar-src-docuflow/f7998b0e-318e-47f1-9c3e-7046d5865539/scratchpad/dated.html)",
+      "Bash(curl -s -o /dev/null -w \"health: %{http_code}\\\\n\" http://localhost:8080/health)",
+      "Bash(curl -s -o /dev/null -w \"root: %{http_code}\\\\n\" http://localhost:8080/)",
+      "Bash(curl -s http://localhost:8080/health -w \"\\\\nstatus:%{http_code}\\\\n\")"
     ]
   }
 }

@@ -436,6 +436,39 @@ a { color: inherit; }
   font-size: 0.74rem;
   color: var(--slate);
 }
+.suggestion {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin: 0.45rem 0 0;
+  padding: 0.5rem 0.65rem;
+  border: 1px dashed var(--stamp);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--stamp) 8%, var(--paper-raised));
+}
+.suggestion p {
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--ink-soft);
+}
+.suggestion strong { color: var(--ink); font-weight: 700; }
+.suggestion form { margin: 0; flex-shrink: 0; }
+.btn-suggestion {
+  border: none;
+  background: none;
+  padding: 0;
+  font-family: 'Fira Sans', sans-serif;
+  font-weight: 700;
+  font-size: 0.76rem;
+  color: var(--stamp);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-suggestion:hover { color: var(--ink); }
+.btn-suggestion:focus-visible { outline: 2px solid var(--stamp); outline-offset: 2px; }
 .field-row {
   display: flex;
   gap: 0.9rem;

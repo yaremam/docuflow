@@ -59,6 +59,14 @@
           <div class="field">
             <label for="date_issued">Date issued</label>
             <input id="date_issued" name="date_issued" type="date" value="{{ date_issued_input_value }}">
+            {% if let Some(suggested) = suggested_date_issued_display %}
+            <div class="suggestion">
+              <p>OCR found a possible date: <strong>{{ suggested }}</strong></p>
+              <form method="post" action="/documents/{{ id }}/accept_suggested_date">
+                <button class="btn-suggestion" type="submit">Use this date</button>
+              </form>
+            </div>
+            {% endif %}
           </div>
           <button class="btn btn-stamp" type="submit">Save changes</button>
         </form>
