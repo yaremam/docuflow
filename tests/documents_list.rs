@@ -56,6 +56,24 @@ async fn empty_state_renders_when_tenant_has_no_documents() {
     assert_eq!(response.status(), axum::http::StatusCode::OK);
     let body = common::body_string(response).await;
     assert!(body.contains("No documents yet"));
+    assert!(body.contains("href=\"/scan\""));
+}
+
+#[tokio::test]
+async fn toolbar_includes_a_scan_with_phone_button() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "toolbar.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "toolbar.docs@example.com").await;
+
+    seed_document(&app.state.pool, user, "some_bill.pdf", &["utilities"], None, datetime(2026, 1, 1)).await;
+
+    let response = common::get_with_cookie(&app, "/documents", &cookie).await;
+
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = common::body_string(response).await;
+    assert!(body.contains("href=\"/scan\""));
+    assert!(body.contains("Scan with phone"));
 }
 
 #[tokio::test]

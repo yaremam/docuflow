@@ -3,6 +3,7 @@
 Cargo.lock
 .env
 .obsidian
+docker-compose.override.yml
 
 # Added by cargo
 #
