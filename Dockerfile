@@ -19,7 +19,7 @@ FROM debian:bookworm-slim
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libssl3 tesseract-ocr poppler-utils \
+    ca-certificates libssl3 tesseract-ocr tesseract-ocr-rus poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/docuflow ./docuflow

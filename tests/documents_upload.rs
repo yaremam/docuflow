@@ -49,6 +49,34 @@ fn document_id_from_location(location: &str) -> uuid::Uuid {
     id_str.parse().expect("redirect should contain a valid document id")
 }
 
+/// Shared by the real-OCR tests below (image, PDF, Cyrillic): signs up a
+/// fresh user, uploads `fixture_path` under `filename`/`content_type`, and
+/// polls until OCR reaches a terminal state. Callers only need to vary the
+/// fixture and the text they expect to find in it.
+async fn upload_and_wait_for_ocr(
+    app: &common::TestApp,
+    email: &str,
+    fixture_path: &str,
+    filename: &str,
+    content_type: &str,
+) -> common::OcrOutcome {
+    let login = common::signup_and_login(app, email, "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+
+    let bytes = std::fs::read(fixture_path).unwrap();
+    let response = common::post_multipart_parts_with_cookie(
+        app,
+        "/documents",
+        &cookie,
+        &[MultipartPart::File { name: "file", filename, content_type, bytes: &bytes }],
+    )
+    .await;
+    assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
+    let id = document_id_from_location(&common::location(&response).unwrap());
+
+    common::wait_for_ocr_outcome(app, id, std::time::Duration::from_secs(15)).await
+}
+
 #[tokio::test]
 async fn successful_image_upload_creates_row_and_redirects() {
     let app = common::test_state().await;
@@ -312,30 +340,41 @@ async fn image_upload_is_actually_ocrd_by_tesseract() {
     }
 
     let app = common::test_state().await;
-    let login = common::signup_and_login(&app, "realocr.docs@example.com", "documentspassword").await;
-    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
-
-    let bytes = std::fs::read("tests/fixtures/ocr_sample.png").unwrap();
-    let response = common::post_multipart_parts_with_cookie(
-        &app,
-        "/documents",
-        &cookie,
-        &[MultipartPart::File {
-            name: "file",
-            filename: "ocr_sample.png",
-            content_type: "image/png",
-            bytes: &bytes,
-        }],
-    )
-    .await;
-    assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
-    let id = document_id_from_location(&common::location(&response).unwrap());
-
-    let outcome = common::wait_for_ocr_outcome(&app, id, std::time::Duration::from_secs(15)).await;
+    let outcome =
+        upload_and_wait_for_ocr(&app, "realocr.docs@example.com", "tests/fixtures/ocr_sample.png", "ocr_sample.png", "image/png")
+            .await;
     assert_eq!(outcome.status, "done", "ocr should complete within the timeout");
     assert!(
         outcome.text.as_deref().unwrap_or("").contains("DOCUFLOW OCR SAMPLE"),
         "expected extracted text to contain the fixture's text, got: {:?}",
+        outcome.text
+    );
+}
+
+#[tokio::test]
+async fn cyrillic_image_upload_is_correctly_ocrd() {
+    if !common::command_on_path("tesseract") {
+        eprintln!("skipping cyrillic_image_upload_is_correctly_ocrd: `tesseract` not found on PATH");
+        return;
+    }
+    if !common::tesseract_has_lang("rus") {
+        eprintln!("skipping cyrillic_image_upload_is_correctly_ocrd: tesseract-ocr-rus (rus.traineddata) not installed");
+        return;
+    }
+
+    let app = common::test_state().await;
+    let outcome = upload_and_wait_for_ocr(
+        &app,
+        "cyrillicocr.docs@example.com",
+        "tests/fixtures/cyrillic_sample.png",
+        "cyrillic_sample.png",
+        "image/png",
+    )
+    .await;
+    assert_eq!(outcome.status, "done", "ocr should complete within the timeout");
+    assert!(
+        outcome.text.as_deref().unwrap_or("").contains("ДОКУФЛОВ"),
+        "expected extracted text to contain the fixture's Cyrillic text, got: {:?}",
         outcome.text
     );
 }
@@ -348,26 +387,14 @@ async fn pdf_upload_is_rasterized_and_ocrd_by_tesseract() {
     }
 
     let app = common::test_state().await;
-    let login = common::signup_and_login(&app, "realpdfocr.docs@example.com", "documentspassword").await;
-    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
-
-    let bytes = std::fs::read("tests/fixtures/ocr_sample.pdf").unwrap();
-    let response = common::post_multipart_parts_with_cookie(
+    let outcome = upload_and_wait_for_ocr(
         &app,
-        "/documents",
-        &cookie,
-        &[MultipartPart::File {
-            name: "file",
-            filename: "ocr_sample.pdf",
-            content_type: "application/pdf",
-            bytes: &bytes,
-        }],
+        "realpdfocr.docs@example.com",
+        "tests/fixtures/ocr_sample.pdf",
+        "ocr_sample.pdf",
+        "application/pdf",
     )
     .await;
-    assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
-    let id = document_id_from_location(&common::location(&response).unwrap());
-
-    let outcome = common::wait_for_ocr_outcome(&app, id, std::time::Duration::from_secs(15)).await;
     assert_eq!(outcome.status, "done", "pdf ocr should complete within the timeout, got text: {:?}", outcome.text);
     assert!(
         outcome.text.as_deref().unwrap_or("").contains("DOCUFLOW OCR SAMPLE PDF"),

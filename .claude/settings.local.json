@@ -87,7 +87,27 @@
       "Bash(curl -s \"http://localhost:4566/docuflow-uploads?list-type=2&max-keys=1000\")",
       "Bash(curl -s -o /dev/null -w \"bucket http: %{http_code}\\\\n\" \"http://localhost:4566/docuflow-uploads\")",
       "Bash(git check-ignore *)",
-      "Bash(echo \"exit:$?\")"
+      "Bash(echo \"exit:$?\")",
+      "Bash(tesseract --list-langs)",
+      "Bash(apt-cache policy *)",
+      "Bash(sudo apt-get install -y tesseract-ocr-rus)",
+      "Bash(curl -sI --max-time 5 https://github.com)",
+      "Bash(mkdir -p /tmp/claude-1000/-home-myar-src-docuflow/f7998b0e-318e-47f1-9c3e-7046d5865539/scratchpad/tessdata)",
+      "Bash(curl -sL -o rus.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/rus.traineddata)",
+      "Bash(curl -sL -o eng.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata)",
+      "Bash(export TESSDATA_PREFIX=/tmp/claude-1000/-home-myar-src-docuflow/f7998b0e-318e-47f1-9c3e-7046d5865539/scratchpad/tessdata)",
+      "Bash(python3 -c \"import PIL; print\\(PIL.__version__\\)\")",
+      "Bash(fc-list)",
+      "Bash(python3 -m pip --version)",
+      "Bash(python3 -m ensurepip --user)",
+      "Bash(apt list *)",
+      "Bash(google-chrome --headless --disable-gpu --no-sandbox --screenshot=/tmp/claude-1000/-home-myar-src-docuflow/f7998b0e-318e-47f1-9c3e-7046d5865539/scratchpad/cyrillic.png --window-size=900,200 file:///tmp/claude-1000/-home-myar-src-docuflow/f7998b0e-318e-47f1-9c3e-7046d5865539/scratchpad/cyrillic.html)",
+      "Bash(export TESSDATA_PREFIX=\"$SCRATCH/tessdata\")",
+      "Bash(tesseract /tmp/claude-1000/-home-myar-src-docuflow/f7998b0e-318e-47f1-9c3e-7046d5865539/scratchpad/cyrillic.png stdout -l eng+rus)",
+      "Bash(tesseract /tmp/claude-1000/-home-myar-src-docuflow/f7998b0e-318e-47f1-9c3e-7046d5865539/scratchpad/cyrillic.png stdout -l eng)",
+      "Bash(docker run *)",
+      "Skill(simplify)",
+      "Bash(git *)"
     ]
   }
 }

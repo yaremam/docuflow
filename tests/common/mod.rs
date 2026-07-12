@@ -386,6 +386,19 @@ pub fn command_on_path(name: &str) -> bool {
     std::process::Command::new("which").arg(name).output().map(|o| o.status.success()).unwrap_or(false)
 }
 
+/// Whether `tesseract`'s installed trained-data set includes `lang` (e.g.
+/// `"rus"`) — used to soft-skip Cyrillic OCR tests on a box that has
+/// `tesseract` on `PATH` but not the `tesseract-ocr-rus` language pack,
+/// rather than failing where the pack isn't installed.
+pub fn tesseract_has_lang(lang: &str) -> bool {
+    std::process::Command::new("tesseract")
+        .arg("--list-langs")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).lines().any(|line| line.trim() == lang))
+        .unwrap_or(false)
+}
+
 pub struct OcrOutcome {
     pub status: String,
     pub text: Option<String>,

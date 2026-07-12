@@ -14,6 +14,12 @@
 //! uploads. Callers dispatch on content type via `extract`, so nothing
 //! outside this module needs to know which content types need rasterizing
 //! first.
+//!
+//! `run_tesseract` always requests `eng+rus` (`tesseract-ocr-rus` package —
+//! also in `Dockerfile`'s runtime stage): Tesseract's multi-language mode
+//! picks the best-matching script per block internally, so Cyrillic text
+//! is recognized correctly without any document-language field or
+//! detection step (see TDR 011).
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -68,6 +74,8 @@ async fn run_tesseract(path: &Path) -> Result<String, OcrError> {
     let output = tokio::process::Command::new("tesseract")
         .arg(path)
         .arg("stdout")
+        .arg("-l")
+        .arg("eng+rus")
         .output()
         .await
         .map_err(|e| OcrError(format!("failed to spawn tesseract: {e}")))?;

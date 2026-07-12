@@ -57,7 +57,7 @@ page, just one reached without a session cookie (see §3/§4 below).
 | Sessions | `tower-sessions` + `tower-sessions-sqlx-store` | Postgres-backed server-side sessions; self-migrates its own table |
 | Auth | `argon2` | password hashing only — no OAuth/SSO yet |
 | Blob storage | `aws-sdk-s3` against LocalStack (dev) / real S3 (prod) | same code path both ways, chosen via env vars only |
-| OCR | `tesseract` CLI via `tokio::process::Command` | shelled out, not an FFI crate — `tesseract-ocr` apt package in `Dockerfile`'s runtime stage, zero new Cargo dependency |
+| OCR | `tesseract` CLI via `tokio::process::Command`, always `-l eng+rus` | shelled out, not an FFI crate — `tesseract-ocr` + `tesseract-ocr-rus` apt packages in `Dockerfile`'s runtime stage, zero new Cargo dependency; multi-language mode recognizes Cyrillic text without a document-language field — see TDR 011 |
 | PDF rasterization | `pdftoppm` (`poppler-utils`) CLI via `tokio::process::Command` | same "shell out, don't link" precedent as `tesseract`; rasterizes each page to a PNG, then each page goes through the existing image-OCR path — see TDR 010 |
 | QR codes | `qrcode` crate, `svg` feature only | pure Rust, no system dependency; renders inline `<svg>` colored via `var(--ink)`/`var(--paper-raised)` so it follows the page's theme |
 | Mail | `lettre` over SMTP | Mailpit in dev, real relay in prod, selected by `SMTP_INSECURE` |
@@ -294,15 +294,18 @@ system, not any one feature's design.
   phone loading it is never logged in, by design (see TDR 009). Tenancy for
   those two routes comes from the `scan_sessions` row the path token
   resolves to, checked by hand inside `handlers::scan`.
-- **`tesseract-ocr` and (since feature 010) `poppler-utils` are
-  host/system dependencies, not Cargo ones** — the Docker runtime image
-  installs both via `apt-get` (see `Dockerfile`), so the containerized app
-  needs nothing extra. Anyone running the app or `cargo test`/`cargo run`
-  *outside* Docker needs `tesseract-ocr` and `poppler-utils` (for its
+- **`tesseract-ocr`, (since feature 010) `poppler-utils`, and (since
+  feature 011) `tesseract-ocr-rus` are host/system dependencies, not Cargo
+  ones** — the Docker runtime image installs all three via `apt-get` (see
+  `Dockerfile`), so the containerized app needs nothing extra. Anyone
+  running the app or `cargo test`/`cargo run` *outside* Docker needs
+  `tesseract-ocr`, `tesseract-ocr-rus`, and `poppler-utils` (for its
   `pdftoppm` binary) installed on their own machine, or the relevant
-  document-upload OCR test soft-skips (checks `which tesseract`/
-  `which pdftoppm` first) and any real upload's `ocr_status` will sit at
-  `'processing'`/never advance.
+  document-upload OCR tests soft-skip (checks `which tesseract`/
+  `which pdftoppm`, and for the Cyrillic test, whether `tesseract
+  --list-langs` includes `rus`) and any real upload's `ocr_status` will sit
+  at `'processing'`/never advance, or Cyrillic text will OCR as garbled
+  Latin-script guesses instead of failing outright.
 
 ## 7. Feature-by-feature decision log
 
@@ -312,6 +315,7 @@ first.
 
 | Feature | TDR | Chosen approach | Why (one line) |
 |---|---|---|---|
+| Cyrillic OCR support | [011](tdr/011_cyrillic_ocr_design.md) | Always run `tesseract -l eng+rus` (multi-language mode), no document-language field | Tesseract's multi-language mode already picks the right script per block internally; no detection step or per-document metadata needed |
 | PDF OCR | [010](tdr/010_pdf_ocr_design.md) | Shell out to `pdftoppm` (poppler-utils) to rasterize each page, then run the existing `tesseract` image-OCR path per page | Stays consistent with the `tesseract` precedent (CLI tool over native-library binding); avoids a second, inconsistent way of vendoring a native PDF dependency |
 | Phone-camera scan handoff | [009](tdr/009_phone_camera_scan_design.md) | Single-use hashed `scan_sessions` token in a QR code; native `<input capture>` on the phone, not WebRTC; `<meta refresh>` polling, not JS | No new client-side JS anywhere in the app; reuses the `password_reset_tokens` token pattern and the OCR-status `<meta refresh>` idiom instead of inventing new ones |
 | Document upload + OCR | [008](tdr/008_document_upload_design.md) | Shell out to the `tesseract` CLI via detached `tokio::spawn` (not an FFI crate, not a job-queue table) | Zero new Cargo dependency, matches the existing fire-and-forget mail-send pattern and CLAUDE.md's "decoupled... Tokio background green threads" wording exactly |
@@ -335,7 +339,12 @@ gaps:
 - **Multi-user tenants** (invite flow, membership roles) — schema/types
   already distinguish `TenantId`/`UserId` in anticipation, but no UI or
   membership table exists.
-- **Retroactive PDF reprocessing** — PDFs uploaded before feature 010
-  shipped keep `ocr_status = 'skipped'` forever; they are not
-  automatically re-queued for the now-available PDF OCR pass. Folds into
-  the OCR retry item above once that exists.
+- **Retroactive OCR reprocessing** — documents OCR'd (or skipped) before
+  a pipeline improvement ships — feature 010's PDF support, feature 011's
+  Cyrillic support — keep whatever `ocr_status`/`ocr_text` they already
+  have; they are not automatically re-queued through the improved
+  pipeline. Folds into the OCR retry item above once that exists.
+- **Document-language field / language auto-detection** — feature 011
+  always runs `tesseract -l eng+rus` unconditionally rather than knowing
+  or asking a document's language; a compulsory language metadata field
+  with automatic recognition is a separate, not-yet-built backlog item.
