@@ -68,3 +68,46 @@ pub struct ResetPasswordTemplate {
     pub valid: bool,
     pub token: String,
 }
+
+/// A single row in the documents list — a display-ready projection of a
+/// `documents` row, not the row itself (dates/tags are pre-formatted in the
+/// handler since no date-formatting Askama filter is set up in this project).
+pub struct DocumentListItem {
+    pub id: uuid::Uuid,
+    pub title: String,
+    pub original_filename: String,
+    pub tags: Vec<String>,
+    pub date_issued: Option<String>,
+    pub uploaded_at: String,
+    pub ocr_status: String,
+}
+
+#[derive(askama::Template, askama_web::WebTemplate)]
+#[template(path = "documents_list.html")]
+pub struct DocumentsListTemplate {
+    pub active_tab: &'static str,
+    pub authenticated: bool,
+    pub nav_avatar_url: Option<String>,
+    pub q: String,
+    pub sort: &'static str,
+    pub documents: Vec<DocumentListItem>,
+}
+
+#[derive(askama::Template, askama_web::WebTemplate)]
+#[template(path = "document_show.html")]
+pub struct DocumentShowTemplate {
+    pub active_tab: &'static str,
+    pub authenticated: bool,
+    pub nav_avatar_url: Option<String>,
+    pub saved: bool,
+    pub id: uuid::Uuid,
+    pub title: String,
+    pub original_filename: String,
+    pub content_type: String,
+    pub file_size_bytes: i64,
+    pub tags_input_value: String,
+    pub date_issued_input_value: String,
+    pub uploaded_at: String,
+    pub ocr_status: String,
+    pub ocr_text: Option<String>,
+}

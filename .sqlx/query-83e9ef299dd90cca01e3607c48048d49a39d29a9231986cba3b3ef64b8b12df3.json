@@ -1,0 +1,59 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select id, title, original_filename, tags, date_issued, ocr_status, created_at\n                   from documents\n                   where tenant_id = $1 and ($2::text[] is null or tags && $2)\n                   order by array_to_string(tags, ',') asc",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "original_filename",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "tags",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 4,
+        "name": "date_issued",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 5,
+        "name": "ocr_status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "83e9ef299dd90cca01e3607c48048d49a39d29a9231986cba3b3ef64b8b12df3"
+}

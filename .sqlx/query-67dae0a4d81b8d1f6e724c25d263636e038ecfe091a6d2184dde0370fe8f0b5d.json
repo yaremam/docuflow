@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update documents set title = $3, tags = $4, date_issued = $5, updated_at = now()\n         where id = $1 and tenant_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "TextArray",
+        "Date"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "67dae0a4d81b8d1f6e724c25d263636e038ecfe091a6d2184dde0370fe8f0b5d"
+}

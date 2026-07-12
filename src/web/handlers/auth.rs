@@ -73,7 +73,7 @@ pub async fn signup_submit(
                 );
                 return Ok(Redirect::to("/login").into_response());
             }
-            Ok(Redirect::to("/profile").into_response())
+            Ok(Redirect::to("/documents").into_response())
         }
         Err(sqlx::Error::Database(db_err)) if db_err.is_unique_violation() => Ok((
             StatusCode::CONFLICT,
@@ -158,7 +158,7 @@ pub async fn login_submit(
     }
 
     session.insert(SESSION_USER_ID_KEY, row.id).await?;
-    Ok(Redirect::to("/welcome?returning=true").into_response())
+    Ok(Redirect::to("/documents").into_response())
 }
 
 #[tracing::instrument(skip(session, tenancy))]

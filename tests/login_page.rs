@@ -20,10 +20,7 @@ async fn post_login_with_correct_password_establishes_session() {
         common::signup_and_login(&app, "existing.user@example.com", "hunter2word").await;
 
     assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
-    assert_eq!(
-        common::location(&response),
-        Some("/welcome?returning=true".to_string())
-    );
+    assert_eq!(common::location(&response), Some("/documents".to_string()));
     assert!(common::session_cookie(&response).is_some());
 }
 

@@ -27,6 +27,8 @@ pub enum AppWebError {
     InvalidResetToken,
     #[error("authentication required")]
     Unauthenticated,
+    #[error("not found")]
+    NotFound,
 }
 
 impl IntoResponse for AppWebError {
@@ -45,6 +47,11 @@ impl IntoResponse for AppWebError {
                 "This reset link is invalid or has expired.",
             )
                 .into_response(),
+            // Deliberately a plain 404, not a redirect — unlike
+            // `Unauthenticated` (a session-integrity concern), this covers a
+            // resource that either doesn't exist or belongs to another
+            // tenant, and must not leak which case it is.
+            AppWebError::NotFound => (StatusCode::NOT_FOUND, "Not found.").into_response(),
             other => {
                 tracing::error!(error = %other, "unhandled web error");
                 (

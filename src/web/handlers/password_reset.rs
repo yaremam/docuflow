@@ -224,5 +224,5 @@ pub async fn reset_password_submit(
         return Ok(Redirect::to("/login").into_response());
     }
 
-    Ok(Redirect::to("/welcome").into_response())
+    Ok(Redirect::to("/documents").into_response())
 }

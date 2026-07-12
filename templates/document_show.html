@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} — DocuFlow{% endblock %}
+
+{% block content %}
+<div class="documents-page">
+  <a class="breadcrumb" href="/documents">&larr; Back to documents</a>
+  {% if saved %}
+  <p class="form-success">Saved.</p>
+  {% endif %}
+  <div class="detail-grid">
+    <div class="detail-text">
+      <div class="card" data-tab="Extracted text">
+        <h2>{{ title }}</h2>
+        <p class="card-sub">{{ original_filename }} &middot; {{ file_size_bytes }} bytes &middot; uploaded {{ uploaded_at }}</p>
+        {% if let Some(ocr_text) = ocr_text %}
+        <div class="detail-text-box">{{ ocr_text }}</div>
+        {% else if ocr_status == "failed" %}
+        <div class="detail-text-box">Text extraction failed for this document.</div>
+        {% else if ocr_status == "skipped" %}
+        <div class="detail-text-box">Text extraction isn't available for this file type yet.</div>
+        {% else %}
+        <div class="detail-text-box">Still processing&hellip; check back shortly.</div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="detail-meta">
+      <div class="card" data-tab="Metadata">
+        <h2>Details</h2>
+        <p class="card-sub">Editable — changes are scoped to your workspace only.</p>
+        <form method="post" action="/documents/{{ id }}">
+          <div class="field">
+            <label for="title">Title</label>
+            <input id="title" name="title" type="text" value="{{ title }}">
+          </div>
+          <div class="field">
+            <label for="tags">Tags</label>
+            <input id="tags" name="tags" type="text" value="{{ tags_input_value }}">
+            <span class="field-hint">Comma-separated</span>
+          </div>
+          <div class="field">
+            <label for="date_issued">Date issued</label>
+            <input id="date_issued" name="date_issued" type="date" value="{{ date_issued_input_value }}">
+          </div>
+          <button class="btn btn-stamp" type="submit">Save changes</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

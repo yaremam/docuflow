@@ -67,7 +67,7 @@ async fn post_reset_password_with_valid_token_resets_password_and_logs_in() {
     .await;
 
     assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
-    assert_eq!(common::location(&response), Some("/welcome".to_string()));
+    assert_eq!(common::location(&response), Some("/documents".to_string()));
     assert!(common::session_cookie(&response).is_some());
 
     // Old password no longer works, new one does.

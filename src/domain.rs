@@ -15,3 +15,7 @@ pub struct TenantId(pub Uuid);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
 #[sqlx(transparent)]
 pub struct UserId(pub Uuid);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[sqlx(transparent)]
+pub struct DocumentId(pub Uuid);

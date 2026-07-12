@@ -10,6 +10,7 @@
   <nav class="page-nav">
     <a class="brand" href="/">DocuFlow</a>
     {% if authenticated %}
+    <a class="tab{% if active_tab == "documents" %} is-primary{% endif %}" href="/documents">Documents</a>
     <a class="avatar-link{% if active_tab == "profile" %} is-current{% endif %}" href="/profile" aria-label="Profile" title="Profile">
       <span class="avatar-circle">
         {% if let Some(url) = nav_avatar_url %}

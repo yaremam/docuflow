@@ -5,6 +5,7 @@ An asynchronous, highly concurrent multi-tenant Document Management System writt
 ## Repository Blueprint
 - `/src`: Main application entrypoints and async web loops.
 - `/tests`: Core integration test harnesses (TDD engine).
+- `/docs/ARCHITECTURE.md`: Living system architecture — components, interfaces, DB schema, and a decision-log index. Start here.
 - `/docs/backlog`: Dynamic product user stories and acceptance criteria.
 - `/docs/tdr`: Technical Design Records evaluating structural engineering decisions.
 

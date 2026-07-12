@@ -237,3 +237,96 @@ impl ResetToken {
     }
 }
 
+const TAGS_MAX_COUNT: usize = 20;
+const TAG_MAX_LEN: usize = 50;
+
+/// A document's free-form tags, submitted as one comma-separated `<input>`
+/// value (no dedicated tags-input widget exists) and stored as a Postgres
+/// `text[]`.
+#[derive(Debug, Default, Clone, serde::Deserialize)]
+#[serde(try_from = "String")]
+pub struct Tags(Vec<String>);
+
+#[derive(Debug, thiserror::Error)]
+pub enum TagsError {
+    #[error("no more than {TAGS_MAX_COUNT} tags are allowed")]
+    TooMany,
+    #[error("each tag must be at most {TAG_MAX_LEN} characters")]
+    TagTooLong,
+}
+
+impl TryFrom<String> for Tags {
+    type Error = TagsError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let tags: Vec<String> = value
+            .split(',')
+            .map(str::trim)
+            .filter(|tag| !tag.is_empty())
+            .map(str::to_string)
+            .collect();
+
+        if tags.len() > TAGS_MAX_COUNT {
+            return Err(TagsError::TooMany);
+        }
+        if tags.iter().any(|tag| tag.len() > TAG_MAX_LEN) {
+            return Err(TagsError::TagTooLong);
+        }
+
+        Ok(Self(tags))
+    }
+}
+
+impl Tags {
+    pub fn into_vec(self) -> Vec<String> {
+        self.0
+    }
+
+    /// Repopulates the edit form's comma-separated text input.
+    pub fn to_input_value(&self) -> String {
+        self.0.join(", ")
+    }
+}
+
+/// A document's user-entered real-world date (as opposed to its automatic
+/// upload timestamp), submitted via `<input type="date">`'s wire format
+/// (`YYYY-MM-DD`). Blank clears the field, mirroring `ProfileField`'s
+/// convention. Parsed by hand rather than via `time`'s `macros`/`parsing`
+/// features (not enabled in this project's `Cargo.toml`) to avoid adding a
+/// new feature flag for one call site.
+#[derive(Debug, Default, Clone, serde::Deserialize)]
+#[serde(try_from = "String")]
+pub struct DateIssuedField(Option<time::Date>);
+
+#[derive(Debug, thiserror::Error)]
+#[error("date issued must be blank or in YYYY-MM-DD format")]
+pub struct DateIssuedFieldError;
+
+impl TryFrom<String> for DateIssuedField {
+    type Error = DateIssuedFieldError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Ok(Self(None));
+        }
+
+        let (year_str, rest) = trimmed.split_once('-').ok_or(DateIssuedFieldError)?;
+        let (month_str, day_str) = rest.split_once('-').ok_or(DateIssuedFieldError)?;
+
+        let year: i32 = year_str.parse().map_err(|_| DateIssuedFieldError)?;
+        let month: u8 = month_str.parse().map_err(|_| DateIssuedFieldError)?;
+        let day: u8 = day_str.parse().map_err(|_| DateIssuedFieldError)?;
+        let month = time::Month::try_from(month).map_err(|_| DateIssuedFieldError)?;
+        let date = time::Date::from_calendar_date(year, month, day).map_err(|_| DateIssuedFieldError)?;
+
+        Ok(Self(Some(date)))
+    }
+}
+
+impl DateIssuedField {
+    pub fn into_option(self) -> Option<time::Date> {
+        self.0
+    }
+}
+
