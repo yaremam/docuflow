@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::web::error::AppWebError;
 use crate::web::forms::Credentials;
+use crate::web::nav;
 use crate::web::state::AppState;
 use crate::web::tenancy::{MaybeTenantContext, TenantContext, SESSION_USER_ID_KEY};
 use crate::web::templates::{LoginTemplate, SignupTemplate};
@@ -13,13 +14,22 @@ use crate::web::templates::{LoginTemplate, SignupTemplate};
 const INVALID_CREDENTIALS: &str = "Invalid email or password.";
 const SIGNUP_FAILED: &str = "We couldn't create that account — check your details and try again.";
 
-#[tracing::instrument(skip(tenancy))]
-pub async fn signup_form(MaybeTenantContext(tenancy): MaybeTenantContext) -> SignupTemplate {
-    SignupTemplate {
+#[tracing::instrument(skip(tenancy, state))]
+pub async fn signup_form(
+    MaybeTenantContext(tenancy): MaybeTenantContext,
+    State(state): State<AppState>,
+) -> Result<SignupTemplate, AppWebError> {
+    let nav_avatar_url = match &tenancy {
+        Some(t) => nav::avatar_url(&state.pool, &state.blob, t.user_id.0).await?,
+        None => None,
+    };
+
+    Ok(SignupTemplate {
         active_tab: "signup",
         authenticated: tenancy.is_some(),
+        nav_avatar_url,
         error: None,
-    }
+    })
 }
 
 #[tracing::instrument(skip(state, session, form))]
@@ -63,13 +73,14 @@ pub async fn signup_submit(
                 );
                 return Ok(Redirect::to("/login").into_response());
             }
-            Ok(Redirect::to("/welcome").into_response())
+            Ok(Redirect::to("/profile").into_response())
         }
         Err(sqlx::Error::Database(db_err)) if db_err.is_unique_violation() => Ok((
             StatusCode::CONFLICT,
             SignupTemplate {
                 active_tab: "signup",
                 authenticated: false,
+                nav_avatar_url: None,
                 error: Some(SIGNUP_FAILED),
             },
         )
@@ -78,13 +89,22 @@ pub async fn signup_submit(
     }
 }
 
-#[tracing::instrument(skip(tenancy))]
-pub async fn login_form(MaybeTenantContext(tenancy): MaybeTenantContext) -> LoginTemplate {
-    LoginTemplate {
+#[tracing::instrument(skip(tenancy, state))]
+pub async fn login_form(
+    MaybeTenantContext(tenancy): MaybeTenantContext,
+    State(state): State<AppState>,
+) -> Result<LoginTemplate, AppWebError> {
+    let nav_avatar_url = match &tenancy {
+        Some(t) => nav::avatar_url(&state.pool, &state.blob, t.user_id.0).await?,
+        None => None,
+    };
+
+    Ok(LoginTemplate {
         active_tab: "login",
         authenticated: tenancy.is_some(),
+        nav_avatar_url,
         error: None,
-    }
+    })
 }
 
 #[tracing::instrument(skip(state, session, form))]
@@ -99,6 +119,7 @@ pub async fn login_submit(
             LoginTemplate {
                 active_tab: "login",
                 authenticated: false,
+                nav_avatar_url: None,
                 error: Some(INVALID_CREDENTIALS),
             },
         )

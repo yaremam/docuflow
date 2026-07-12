@@ -33,3 +33,8 @@
 - **AI Agent Split:**
   - `claude` -> Deep architectural refactoring, async compiler bug remediation, lifetimes, and macro definitions.
   - `agy` (Google Antigravity, not yet adopted — reserved for future use) -> Heavy CRUD boilerplate generation, raw SQL schema data layouts, and package tracking.
+
+## 5. UI Design Process
+- **Mockup Before Implementation:** Any new UI screen or user-facing feature must start with a mockup (an Artifact) before any template/handler code is written. Minor tweaks to existing screens (copy edits, color/spacing fixes) don't require this.
+- Mockups must reuse the approved "ledger and stamp" visual identity (tokens in `static/style.css`: navy ink, slate paper, forest-green stamp accent; Roboto Slab/Fira Sans/Fira Mono) rather than introducing a new design direction.
+- Get explicit sign-off on the mockup before implementing.

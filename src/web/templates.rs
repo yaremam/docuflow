@@ -3,6 +3,7 @@
 pub struct LandingTemplate {
     pub active_tab: &'static str,
     pub authenticated: bool,
+    pub nav_avatar_url: Option<String>,
 }
 
 #[derive(askama::Template, askama_web::WebTemplate)]
@@ -10,6 +11,7 @@ pub struct LandingTemplate {
 pub struct SignupTemplate {
     pub active_tab: &'static str,
     pub authenticated: bool,
+    pub nav_avatar_url: Option<String>,
     pub error: Option<&'static str>,
 }
 
@@ -18,6 +20,7 @@ pub struct SignupTemplate {
 pub struct LoginTemplate {
     pub active_tab: &'static str,
     pub authenticated: bool,
+    pub nav_avatar_url: Option<String>,
     pub error: Option<&'static str>,
 }
 
@@ -26,6 +29,7 @@ pub struct LoginTemplate {
 pub struct WelcomeTemplate {
     pub active_tab: &'static str,
     pub authenticated: bool,
+    pub nav_avatar_url: Option<String>,
     pub returning: bool,
 }
 
@@ -34,6 +38,7 @@ pub struct WelcomeTemplate {
 pub struct ProfileTemplate {
     pub active_tab: &'static str,
     pub authenticated: bool,
+    pub nav_avatar_url: Option<String>,
     pub saved: bool,
     pub first_name: String,
     pub last_name: String,
@@ -50,6 +55,7 @@ pub struct ProfileTemplate {
 pub struct ForgotPasswordTemplate {
     pub active_tab: &'static str,
     pub authenticated: bool,
+    pub nav_avatar_url: Option<String>,
     pub sent: bool,
 }
 
@@ -58,6 +64,7 @@ pub struct ForgotPasswordTemplate {
 pub struct ResetPasswordTemplate {
     pub active_tab: &'static str,
     pub authenticated: bool,
+    pub nav_avatar_url: Option<String>,
     pub valid: bool,
     pub token: String,
 }

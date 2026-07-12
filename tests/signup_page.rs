@@ -24,7 +24,7 @@ async fn post_signup_with_valid_data_creates_user_and_establishes_session() {
     .await;
 
     assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
-    assert_eq!(common::location(&response), Some("/welcome".to_string()));
+    assert_eq!(common::location(&response), Some("/profile".to_string()));
     assert!(
         common::session_cookie(&response).is_some(),
         "signup should establish an authenticated session"

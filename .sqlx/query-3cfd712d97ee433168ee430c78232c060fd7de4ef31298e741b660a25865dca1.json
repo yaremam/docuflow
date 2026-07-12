@@ -1,22 +1,22 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select password_hash from users where email = $1",
+  "query": "select profile_picture_key from users where id = $1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "password_hash",
+        "name": "profile_picture_key",
         "type_info": "Text"
       }
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "Uuid"
       ]
     },
     "nullable": [
-      false
+      true
     ]
   },
-  "hash": "a106fc3acdfdcd96e01d0c19f8e00d3184205142625ed0b47e7cd667d8c73cd6"
+  "hash": "3cfd712d97ee433168ee430c78232c060fd7de4ef31298e741b660a25865dca1"
 }

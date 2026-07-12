@@ -10,7 +10,18 @@
   <nav class="page-nav">
     <a class="brand" href="/">DocuFlow</a>
     {% if authenticated %}
-    <a class="tab{% if active_tab == "profile" %} is-primary{% endif %}" href="/profile">Profile</a>
+    <a class="avatar-link{% if active_tab == "profile" %} is-current{% endif %}" href="/profile" aria-label="Profile" title="Profile">
+      <span class="avatar-circle">
+        {% if let Some(url) = nav_avatar_url %}
+        <img src="{{ url }}" alt="">
+        {% else %}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.4"></circle><path d="M4.5 19.4c1.4-3.4 4.2-5.1 7.5-5.1s6.1 1.7 7.5 5.1"></path></svg>
+        {% endif %}
+      </span>
+    </a>
+    <form method="post" action="/logout" class="nav-logout-form">
+      <button class="tab tab-button" type="submit">Log out</button>
+    </form>
     {% else %}
     <a class="tab{% if active_tab == "login" %} is-primary{% endif %}" href="/login">Log in</a>
     <a class="tab{% if active_tab == "signup" %} is-primary{% endif %}" href="/signup">Sign up</a>

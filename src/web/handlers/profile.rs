@@ -1,7 +1,8 @@
-use axum::extract::{Form, Multipart, Query, State};
+use axum::extract::{Extension, Form, Multipart, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
+use tower_sessions::Session;
 
 use crate::web::error::AppWebError;
 use crate::web::forms::ProfileForm;
@@ -20,19 +21,37 @@ pub struct ShowQuery {
     saved: bool,
 }
 
-#[tracing::instrument(skip(state, tenancy))]
+#[tracing::instrument(skip(state, tenancy, session))]
 pub async fn show(
     tenancy: TenantContext,
     State(state): State<AppState>,
+    Extension(session): Extension<Session>,
     Query(query): Query<ShowQuery>,
-) -> Result<ProfileTemplate, AppWebError> {
+) -> Result<Response, AppWebError> {
     let row = sqlx::query!(
         "select first_name, last_name, street_address, city, postcode, country, phone, profile_picture_key
          from users where id = $1",
         tenancy.user_id.0,
     )
     .fetch_one(&state.pool)
-    .await?;
+    .await;
+
+    let row = match row {
+        Ok(row) => row,
+        // The session is otherwise valid, but the user id it names has no
+        // matching row (e.g. the account was removed out from under a
+        // still-live session) — clear the stale session and send them to
+        // log in again instead of 500ing on every subsequent visit.
+        Err(sqlx::Error::RowNotFound) => {
+            tracing::warn!(
+                user_id = %tenancy.user_id.0,
+                "profile session referenced a missing user; clearing session"
+            );
+            session.flush().await?;
+            return Ok(Redirect::to("/login").into_response());
+        }
+        Err(e) => return Err(e.into()),
+    };
 
     let picture_url = match row.profile_picture_key {
         Some(key) => Some(state.blob.presigned_get_url(&key).await?),
@@ -42,6 +61,7 @@ pub async fn show(
     Ok(ProfileTemplate {
         active_tab: "profile",
         authenticated: true,
+        nav_avatar_url: picture_url.clone(),
         saved: query.saved,
         first_name: row.first_name.unwrap_or_default(),
         last_name: row.last_name.unwrap_or_default(),
@@ -51,7 +71,8 @@ pub async fn show(
         country: row.country.unwrap_or_default(),
         phone: row.phone.unwrap_or_default(),
         picture_url,
-    })
+    }
+    .into_response())
 }
 
 #[tracing::instrument(skip(state, tenancy, form))]

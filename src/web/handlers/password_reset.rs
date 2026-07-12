@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use crate::web::error::AppWebError;
 use crate::web::forms::{EmailAddress, Password, ResetToken};
+use crate::web::nav;
 use crate::web::state::AppState;
 use crate::web::tenancy::{MaybeTenantContext, SESSION_USER_ID_KEY};
 use crate::web::templates::{ForgotPasswordTemplate, ResetPasswordTemplate};
@@ -20,16 +21,23 @@ pub struct ForgotPasswordQuery {
     sent: bool,
 }
 
-#[tracing::instrument(skip(tenancy))]
+#[tracing::instrument(skip(tenancy, state))]
 pub async fn forgot_password_form(
     MaybeTenantContext(tenancy): MaybeTenantContext,
+    State(state): State<AppState>,
     Query(query): Query<ForgotPasswordQuery>,
-) -> ForgotPasswordTemplate {
-    ForgotPasswordTemplate {
+) -> Result<ForgotPasswordTemplate, AppWebError> {
+    let nav_avatar_url = match &tenancy {
+        Some(t) => nav::avatar_url(&state.pool, &state.blob, t.user_id.0).await?,
+        None => None,
+    };
+
+    Ok(ForgotPasswordTemplate {
         active_tab: "",
         authenticated: tenancy.is_some(),
+        nav_avatar_url,
         sent: query.sent,
-    }
+    })
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -109,9 +117,15 @@ pub async fn reset_password_form(
         Err(other) => return Err(other),
     };
 
+    let nav_avatar_url = match &tenancy {
+        Some(t) => nav::avatar_url(&state.pool, &state.blob, t.user_id.0).await?,
+        None => None,
+    };
+
     Ok(ResetPasswordTemplate {
         active_tab: "",
         authenticated: tenancy.is_some(),
+        nav_avatar_url,
         valid,
         token: query.token.as_str().to_string(),
     })
@@ -173,6 +187,7 @@ pub async fn reset_password_submit(
             ResetPasswordTemplate {
                 active_tab: "",
                 authenticated: false,
+                nav_avatar_url: None,
                 valid: false,
                 token: form.token.as_str().to_string(),
             },
