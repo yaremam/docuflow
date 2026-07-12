@@ -2,10 +2,18 @@
 
 {% block title %}{{ title }} — DocuFlow{% endblock %}
 
+{% block head %}
+{% if ocr_status == "pending" || ocr_status == "processing" %}
+<meta http-equiv="refresh" content="5">
+{% endif %}
+{% endblock %}
+
 {% block content %}
 <div class="documents-page">
   <a class="breadcrumb" href="/documents">&larr; Back to documents</a>
-  {% if saved %}
+  {% if uploaded %}
+  <p class="form-success">Uploaded &mdash; extracting text now.</p>
+  {% else if saved %}
   <p class="form-success">Saved.</p>
   {% endif %}
   <div class="detail-grid">

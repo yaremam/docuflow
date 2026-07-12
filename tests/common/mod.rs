@@ -4,8 +4,12 @@
 //! `tests/common/mod.rs` pattern, suppressed here rather than per call site.
 #![allow(dead_code)]
 
+use std::str::FromStr;
+
 use docuflow::web::state::{self, AppState};
 use http_body_util::BodyExt;
+use sqlx::postgres::PgConnectOptions;
+use sqlx::PgPool;
 use tokio::sync::OnceCell;
 use tower::ServiceExt;
 use tower_sessions::SessionManagerLayer;
@@ -16,11 +20,59 @@ pub struct TestApp {
     pub session_layer: SessionManagerLayer<PostgresStore>,
 }
 
-fn database_url() -> String {
-    std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://admin:secretpassword@localhost:5432/doc_manager_db".to_string()
+/// Deliberately **not** derived from `DATABASE_URL` (the app's own dev/prod
+/// connection string, read from `.env` and used by the Docker-deployed
+/// container) — tests get their own database, on the same Postgres server,
+/// so a `cargo test` run can never truncate the dev stack's real data again.
+/// `TEST_DATABASE_URL` is an explicit escape hatch (e.g. for CI pointing at
+/// a different host), not something a normal dev-loop `.env` needs to set.
+fn test_database_url() -> String {
+    std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://admin:secretpassword@localhost:5432/doc_manager_db_test".to_string()
     })
 }
+
+/// Creates the test database if it doesn't exist yet, by connecting to the
+/// server's built-in `postgres` maintenance database first — `PgPool::connect`
+/// against a not-yet-existing database fails outright, so this has to run
+/// before `state::connect` touches `test_database_url()` for real. Only
+/// needs to happen once per test binary (see `DB_ENSURED` below); safe to
+/// call from many test binaries racing at once, since each just re-checks
+/// `pg_database` and no-ops if a sibling process already created it.
+async fn ensure_test_database_exists(test_db_url: &str) {
+    let options = PgConnectOptions::from_str(test_db_url)
+        .expect("TEST_DATABASE_URL should be a valid Postgres connection string");
+    let db_name = options
+        .get_database()
+        .expect("TEST_DATABASE_URL should include a database name")
+        .to_string();
+    let maintenance_options = options.database("postgres");
+
+    let pool = PgPool::connect_with(maintenance_options)
+        .await
+        .expect("failed to connect to the Postgres server to create the test database — is `docker compose up -d postgres` running locally?");
+
+    let exists: bool = sqlx::query_scalar("select exists(select 1 from pg_database where datname = $1)")
+        .bind(&db_name)
+        .fetch_one(&pool)
+        .await
+        .expect("failed to check whether the test database exists");
+
+    if !exists {
+        // Identifiers can't be bound as query parameters; safe here since
+        // `db_name` comes from our own hardcoded `test_database_url`
+        // default (or an operator-controlled `TEST_DATABASE_URL`), never
+        // from request input.
+        sqlx::query(&format!("create database \"{db_name}\""))
+            .execute(&pool)
+            .await
+            .expect("failed to create the test database");
+    }
+
+    pool.close().await;
+}
+
+static DB_ENSURED: OnceCell<()> = OnceCell::const_new();
 
 // Migrations are idempotent and process-wide; only actually run them once
 // per test binary. Each test still connects its own fresh pool (see
@@ -28,11 +80,29 @@ fn database_url() -> String {
 // parallel test execution.
 static MIGRATIONS_DONE: OnceCell<()> = OnceCell::const_new();
 
-/// Connects to the same Postgres instance as local dev (`docker-compose up -d`
-/// must be running), runs our migrations (once per test binary), and
-/// truncates `users`/`tenants` for a clean slate.
+/// Arbitrary fixed key for the Postgres advisory lock guarding the
+/// per-test `truncate` below — same coordination idiom already used by
+/// `state::migrate`'s `ENSURE_BUCKET_LOCK_KEY`, just a different key so
+/// the two locks don't collide. Needed because `cargo test`'s default
+/// (multi-threaded, cross-binary) parallelism runs many tests' `truncate
+/// users, tenants cascade` concurrently — two such truncates can lock the
+/// cascaded tables in different orders and deadlock (`40P01`) under
+/// Postgres's `AccessExclusiveLock` semantics for `TRUNCATE`. Serializing
+/// just the truncate step avoids that without giving up intra-suite
+/// parallelism for everything else.
+const TRUNCATE_LOCK_KEY: i64 = 0x646f6375_74657374; // "docutest" in hex, truncated to fit i64
+
+/// Connects to a dedicated `doc_manager_db_test` database on the same
+/// Postgres instance as local dev (`docker-compose up -d` must be
+/// running) — never the dev/prod `doc_manager_db` the Docker-deployed app
+/// actually uses. Creates the test database on first use, runs our
+/// migrations (once per test binary), and truncates `users`/`tenants` for
+/// a clean slate.
 pub async fn test_state() -> TestApp {
-    let (app_state, session_store, session_layer) = state::connect(&database_url())
+    let url = test_database_url();
+    DB_ENSURED.get_or_init(|| ensure_test_database_exists(&url)).await;
+
+    let (app_state, session_store, session_layer) = state::connect(&url)
         .await
         .expect("failed to connect to the test database — is `docker compose up -d` running locally?");
 
@@ -44,10 +114,21 @@ pub async fn test_state() -> TestApp {
         })
         .await;
 
-    sqlx::query!("truncate users, tenants cascade")
-        .execute(&app_state.pool)
+    let mut conn = app_state
+        .pool
+        .acquire()
         .await
-        .expect("failed to truncate test tables");
+        .expect("failed to acquire a connection to serialize the test truncate");
+    sqlx::query!("select pg_advisory_lock($1)", TRUNCATE_LOCK_KEY)
+        .fetch_one(&mut *conn)
+        .await
+        .expect("failed to acquire the truncate advisory lock");
+    let truncate_result = sqlx::query!("truncate users, tenants cascade").execute(&mut *conn).await;
+    sqlx::query!("select pg_advisory_unlock($1)", TRUNCATE_LOCK_KEY)
+        .fetch_one(&mut *conn)
+        .await
+        .expect("failed to release the truncate advisory lock");
+    truncate_result.expect("failed to truncate test tables");
 
     TestApp {
         state: app_state,
@@ -63,8 +144,8 @@ pub async fn test_state() -> TestApp {
 /// credentials), so it's safe to construct here even without LocalStack
 /// running.
 pub async fn lazy_test_app() -> TestApp {
-    let pool = sqlx::PgPool::connect_lazy(&database_url())
-        .expect("DATABASE_URL should be a valid Postgres connection string");
+    let pool = sqlx::PgPool::connect_lazy(&test_database_url())
+        .expect("TEST_DATABASE_URL should be a valid Postgres connection string");
     let session_store = PostgresStore::new(pool.clone());
     let session_layer = SessionManagerLayer::new(session_store).with_secure(false);
     let (client, presign_client) = docuflow::blob::clients_from_env().await;
@@ -78,6 +159,7 @@ pub async fn lazy_test_app() -> TestApp {
             blob,
             mailer,
             app_base_url,
+            ocr_semaphore: std::sync::Arc::new(tokio::sync::Semaphore::new(2)),
         },
         session_layer,
     }
@@ -149,33 +231,50 @@ pub async fn post_with_cookie(
     request(test_app, "POST", uri, Some(cookie), None).await
 }
 
-/// Builds a minimal single-file `multipart/form-data` body — just enough
-/// structure for the one file-upload route this suite tests, not a general
-/// multipart builder.
-fn multipart_body(field_name: &str, filename: &str, content_type: &str, bytes: &[u8]) -> (String, Vec<u8>) {
-    const BOUNDARY: &str = "docuflow-test-boundary";
+/// A single multipart part, for building bodies with more than one field
+/// (the document-upload form has several) in a caller-chosen order.
+pub enum MultipartPart<'a> {
+    Text { name: &'a str, value: &'a str },
+    File { name: &'a str, filename: &'a str, content_type: &'a str, bytes: &'a [u8] },
+}
+
+fn multipart_body_with_parts(parts: &[MultipartPart]) -> (String, Vec<u8>) {
+    const BOUNDARY: &str = "docuflow-test-boundary-multi";
     let mut body = Vec::new();
-    body.extend_from_slice(
-        format!(
-            "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{field_name}\"; filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n"
-        )
-        .as_bytes(),
-    );
-    body.extend_from_slice(bytes);
-    body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
+    for part in parts {
+        match part {
+            MultipartPart::Text { name, value } => {
+                body.extend_from_slice(
+                    format!("--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n")
+                        .as_bytes(),
+                );
+            }
+            MultipartPart::File { name, filename, content_type, bytes } => {
+                body.extend_from_slice(
+                    format!(
+                        "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n"
+                    )
+                    .as_bytes(),
+                );
+                body.extend_from_slice(bytes);
+                body.extend_from_slice(b"\r\n");
+            }
+        }
+    }
+    body.extend_from_slice(format!("--{BOUNDARY}--\r\n").as_bytes());
     (format!("multipart/form-data; boundary={BOUNDARY}"), body)
 }
 
-pub async fn post_multipart_with_cookie(
+/// Posts a multipart body built from `parts`, in the given order — lets a
+/// test exercise both the normal "metadata then file" order and a
+/// deliberately out-of-order body.
+pub async fn post_multipart_parts_with_cookie(
     test_app: &TestApp,
     uri: &str,
     cookie: &str,
-    field_name: &str,
-    filename: &str,
-    content_type: &str,
-    bytes: &[u8],
+    parts: &[MultipartPart<'_>],
 ) -> axum::http::Response<axum::body::Body> {
-    let (multipart_content_type, body) = multipart_body(field_name, filename, content_type, bytes);
+    let (multipart_content_type, body) = multipart_body_with_parts(parts);
     let request = axum::http::Request::builder()
         .method("POST")
         .uri(uri)
@@ -185,6 +284,27 @@ pub async fn post_multipart_with_cookie(
         .unwrap();
 
     app(test_app).oneshot(request).await.unwrap()
+}
+
+/// Posts a single-file `multipart/form-data` body — a thin convenience
+/// wrapper over `post_multipart_parts_with_cookie` for the common
+/// one-file, no-metadata case.
+pub async fn post_multipart_with_cookie(
+    test_app: &TestApp,
+    uri: &str,
+    cookie: &str,
+    field_name: &str,
+    filename: &str,
+    content_type: &str,
+    bytes: &[u8],
+) -> axum::http::Response<axum::body::Body> {
+    post_multipart_parts_with_cookie(
+        test_app,
+        uri,
+        cookie,
+        &[MultipartPart::File { name: field_name, filename, content_type, bytes }],
+    )
+    .await
 }
 
 /// Posts a `/signup` submission for the given email/password. The only

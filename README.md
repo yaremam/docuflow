@@ -100,6 +100,14 @@ docker compose up -d postgres
 cargo test
 ```
 
+Tests run against their own `doc_manager_db_test` database — created
+automatically on first run, on the same Postgres server as dev but never
+the `doc_manager_db` your `docker compose up` app container actually uses.
+This means `cargo test` is safe to run at any time, even with real
+signed-up accounts sitting in your dev database — it can't truncate them.
+Override the test database with `TEST_DATABASE_URL` if you need tests to
+target a different Postgres server (e.g. in CI).
+
 ### Changing a database query
 
 If you add or modify a `sqlx::query!`/`sqlx::query_as!` call, regenerate the offline

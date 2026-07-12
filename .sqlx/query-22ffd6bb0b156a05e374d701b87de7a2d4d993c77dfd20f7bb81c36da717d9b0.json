@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update documents set ocr_status = 'pending' where ocr_status = 'processing'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "22ffd6bb0b156a05e374d701b87de7a2d4d993c77dfd20f7bb81c36da717d9b0"
+}

@@ -19,13 +19,17 @@
         <option value="tags_asc"{% if sort == "tags_asc" %} selected{% endif %}>Tags (A&ndash;Z)</option>
       </select>
     </div>
-    <button class="btn btn-outline" type="submit">Apply</button>
+    <div class="toolbar-actions">
+      <button class="btn btn-outline" type="submit">Apply</button>
+      <a class="btn btn-stamp" href="/documents/new">+ Add document</a>
+    </div>
   </form>
 
   {% if documents.is_empty() %}
   <div class="empty-state">
     <h3>No documents yet</h3>
     <p>Once you add a bill, policy, or contract, it'll show up here — searchable by tag and sortable by date.</p>
+    <a class="btn btn-stamp" href="/documents/new">+ Add your first document</a>
   </div>
   {% else %}
   <div class="doc-list">

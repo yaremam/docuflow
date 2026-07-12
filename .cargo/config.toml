@@ -1,0 +1,11 @@
+[env]
+# The integration test suite shares mutable state across tests: every
+# `test_state()` call (tests/common/mod.rs) truncates `users`/`tenants` at
+# the start of a test, against one shared `doc_manager_db_test` database.
+# That makes tests unsafe to run concurrently within a binary — one test's
+# truncate can wipe another concurrently-running test's just-created
+# fixtures mid-test, or two truncates can deadlock on Postgres's
+# AccessExclusiveLock. Forcing single-threaded test execution here means
+# `cargo test` is deterministic with no flag to remember, rather than
+# depending on every contributor knowing to pass `--test-threads=1`.
+RUST_TEST_THREADS = "1"

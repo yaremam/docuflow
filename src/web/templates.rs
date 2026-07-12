@@ -100,6 +100,7 @@ pub struct DocumentShowTemplate {
     pub authenticated: bool,
     pub nav_avatar_url: Option<String>,
     pub saved: bool,
+    pub uploaded: bool,
     pub id: uuid::Uuid,
     pub title: String,
     pub original_filename: String,
@@ -110,4 +111,12 @@ pub struct DocumentShowTemplate {
     pub uploaded_at: String,
     pub ocr_status: String,
     pub ocr_text: Option<String>,
+}
+
+#[derive(askama::Template, askama_web::WebTemplate)]
+#[template(path = "document_new.html")]
+pub struct DocumentNewTemplate {
+    pub active_tab: &'static str,
+    pub authenticated: bool,
+    pub nav_avatar_url: Option<String>,
 }

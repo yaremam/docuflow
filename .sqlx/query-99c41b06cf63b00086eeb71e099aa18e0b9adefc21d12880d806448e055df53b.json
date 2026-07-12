@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select prt.id from password_reset_tokens prt join users u on u.id = prt.user_id where u.email = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "99c41b06cf63b00086eeb71e099aa18e0b9adefc21d12880d806448e055df53b"
+}

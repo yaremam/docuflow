@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select ocr_status, ocr_text from documents where id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ocr_status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "ocr_text",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "9153e2c322835e376b79266c76cbd26e22d655b42f39012665cc37186b38e223"
+}

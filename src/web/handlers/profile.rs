@@ -118,7 +118,7 @@ pub async fn upload_picture(
     }
 
     let key = format!("profile-pictures/{}", tenancy.user_id.0);
-    state
+    let _bytes_uploaded = state
         .blob
         .stream_upload(&key, &content_type, field, MAX_PICTURE_BYTES)
         .await?;

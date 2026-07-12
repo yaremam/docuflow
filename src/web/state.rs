@@ -1,10 +1,18 @@
+use std::sync::Arc;
+
 use sqlx::PgPool;
+use tokio::sync::Semaphore;
 use tower_sessions::SessionManagerLayer;
 use tower_sessions_sqlx_store::PostgresStore;
 
 use crate::blob::{self, BlobStore};
 use crate::error::AppError;
 use crate::mailer::Mailer;
+
+/// Caps how many `tesseract` subprocesses can run at once — a burst of
+/// document uploads shouldn't be able to spawn unbounded concurrent child
+/// processes on the box that's also serving requests.
+const MAX_CONCURRENT_OCR_JOBS: usize = 2;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -15,6 +23,9 @@ pub struct AppState {
     /// user's own browser — loaded once at boot rather than re-read from
     /// the environment on every `/forgot-password` request.
     pub app_base_url: String,
+    /// Acquired by each detached OCR background task before running
+    /// `tesseract` (see `web::handlers::documents::create`).
+    pub ocr_semaphore: Arc<Semaphore>,
 }
 
 /// Connects to Postgres, builds an S3 client, and builds the session layer,
@@ -47,6 +58,7 @@ pub async fn connect(
             blob,
             mailer,
             app_base_url,
+            ocr_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_OCR_JOBS)),
         },
         session_store,
         session_layer,
@@ -66,6 +78,21 @@ const ENSURE_BUCKET_LOCK_KEY: i64 = 0x646f6375_666c6f77; // "docuflow" in hex, t
 pub async fn migrate(pool: &PgPool, session_store: &PostgresStore, blob: &BlobStore) -> Result<(), AppError> {
     sqlx::migrate!().run(pool).await?;
     session_store.migrate().await?;
+
+    // A detached OCR background task (see `web::handlers::documents::create`)
+    // isn't tracked by axum's graceful shutdown — only in-flight HTTP
+    // connections are — so a restart mid-OCR can leave a row stuck at
+    // `'processing'` forever. Sweeping it back to `'pending'` on boot at
+    // least stops the UI from claiming "still working" indefinitely.
+    // This assumes a single running instance: it's correct for this
+    // deployment today, but would incorrectly steal another live
+    // instance's in-flight row if this app is ever horizontally scaled.
+    // It's also only a half-fix — there's no retry mechanism yet, so a
+    // swept-back row just sits at `'pending'` until a future feature adds
+    // one.
+    sqlx::query!("update documents set ocr_status = 'pending' where ocr_status = 'processing'")
+        .execute(pool)
+        .await?;
 
     // Several test binaries (separate processes) can call this at once on a
     // fresh environment, all racing to create the same S3 bucket — observed

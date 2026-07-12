@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}Add a document — DocuFlow{% endblock %}
+
+{% block content %}
+<div class="documents-page">
+  <a class="breadcrumb" href="/documents">&larr; Back to documents</a>
+  <div class="form-page" style="padding: 0;">
+    <div class="card card-wide" data-tab="Add document">
+      <h2>Add a document</h2>
+      <p class="card-sub">Upload a bill, policy, or contract. You can leave any of these blank and fill them in later.</p>
+      <form method="post" action="/documents" enctype="multipart/form-data">
+        <div class="field">
+          <label for="title">Title</label>
+          <input id="title" name="title" type="text" placeholder="e.g. Homeowners insurance renewal">
+        </div>
+        <div class="field">
+          <label for="tags">Tags</label>
+          <input id="tags" name="tags" type="text" placeholder="e.g. insurance, home, 2026">
+          <span class="field-hint">Comma-separated</span>
+        </div>
+        <div class="field">
+          <label for="date_issued">Date issued</label>
+          <input id="date_issued" name="date_issued" type="date">
+        </div>
+        <div class="field">
+          <label for="file">File</label>
+          <input id="file" name="file" type="file" required>
+          <div class="upload-types-hint">
+            <span class="type-chip ocr">JPEG</span>
+            <span class="type-chip ocr">PNG</span>
+            <span class="type-chip ocr">TIFF</span>
+            <span class="type-chip ocr">WEBP</span>
+            <span class="type-chip">PDF</span>
+          </div>
+          <span class="field-hint">Up to 20MB. Photos and scans get their text extracted automatically &mdash; chips marked OCR. PDF text extraction is coming in a future update; PDFs are still stored and viewable.</span>
+        </div>
+        <button class="btn btn-stamp" type="submit">Upload</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -129,6 +129,10 @@ impl BlobStore {
         }
     }
 
+    /// Streams `field` to S3 and returns the total number of bytes uploaded
+    /// (already tracked internally for the `max_bytes` check, so callers
+    /// that need the final size — e.g. to populate a `file_size_bytes`
+    /// column — don't need a second read).
     #[tracing::instrument(skip(self, field))]
     pub async fn stream_upload(
         &self,
@@ -136,7 +140,7 @@ impl BlobStore {
         content_type: &str,
         mut field: Field<'_>,
         max_bytes: usize,
-    ) -> Result<(), BlobError> {
+    ) -> Result<usize, BlobError> {
         let create = self
             .client
             .create_multipart_upload()
@@ -205,7 +209,7 @@ impl BlobStore {
             .await
             .map_err(s3_err)?;
 
-        Ok(())
+        Ok(total)
     }
 
     async fn upload_part(
@@ -244,6 +248,28 @@ impl BlobStore {
         }
         completed_parts.push(part.build());
         Ok(())
+    }
+
+    /// Downloads an object's full body into memory. A plain buffered GET,
+    /// not a streaming one — deliberately: this is used only by detached
+    /// background work (OCR) on an already-size-bounded (≤20MB) file, not
+    /// the client-facing upload path `stream_upload` above exists to keep
+    /// bounded; re-fetching here instead of having the request handler hand
+    /// its already-streamed bytes to the background task keeps "bounded
+    /// streaming upload" and "backgrounded full-buffer OCR read" as
+    /// separate concerns, rather than making the request path hold a whole
+    /// file in memory just to save one background-only round trip.
+    pub async fn get_object(&self, key: &str) -> Result<Vec<u8>, BlobError> {
+        let output = self
+            .client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+            .map_err(s3_err)?;
+        let bytes = output.body.collect().await.map_err(s3_err)?.into_bytes();
+        Ok(bytes.to_vec())
     }
 
     /// Short-lived presigned GET URL, for rendering the picture in an

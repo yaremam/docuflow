@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update documents set ocr_status = 'processing' where id = $1 and tenant_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1d17c241a706c201964290f0660e61e3f0cd6fcb28c1847b785a1f107ebcb4fc"
+}

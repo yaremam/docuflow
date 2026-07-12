@@ -24,6 +24,7 @@ flowchart TB
     S3[("S3 / LocalStack<br/>profile pictures, document blobs")]
     SMTP[["SMTP (Mailpit dev / real relay prod)<br/>password-reset emails"]]
     Jaeger[["Jaeger<br/>OTLP gRPC :4317, UI :16686"]]
+    Tesseract[["tesseract CLI<br/>(subprocess, not a network service)"]]
 
     Browser -->|HTTP forms, cookies| Router
     Router --> Handlers
@@ -32,6 +33,7 @@ flowchart TB
     Handlers -->|sqlx| Postgres
     Handlers -->|aws-sdk-s3| S3
     Handlers -->|lettre| SMTP
+    Handlers -.->|tokio::spawn, detached| Tesseract
     App -.->|spans, OTel Baggage| Jaeger
 ```
 
@@ -48,6 +50,7 @@ handlers return HTML (Askama templates) or a redirect.
 | Sessions | `tower-sessions` + `tower-sessions-sqlx-store` | Postgres-backed server-side sessions; self-migrates its own table |
 | Auth | `argon2` | password hashing only — no OAuth/SSO yet |
 | Blob storage | `aws-sdk-s3` against LocalStack (dev) / real S3 (prod) | same code path both ways, chosen via env vars only |
+| OCR | `tesseract` CLI via `tokio::process::Command` | shelled out, not an FFI crate — `tesseract-ocr` apt package in `Dockerfile`'s runtime stage, zero new Cargo dependency |
 | Mail | `lettre` over SMTP | Mailpit in dev, real relay in prod, selected by `SMTP_INSECURE` |
 | Telemetry | `tracing` + `tracing-opentelemetry` + OTLP/gRPC → Jaeger | see [§5](#5-telemetry) |
 | Errors | `thiserror`, two-tier: `AppError` (boot) / `AppWebError` (request) | zero `.unwrap()`/`.expect()`/`panic!()` in request-handling code, per CLAUDE.md |
@@ -70,7 +73,8 @@ flowchart LR
 
     subgraph core["src/ (crate root)"]
         domain["domain.rs<br/>TenantId, UserId, DocumentId"]
-        blob["blob.rs<br/>BlobStore: streaming multipart<br/>upload, presigned GET"]
+        blob["blob.rs<br/>BlobStore: streaming multipart<br/>upload, get_object, presigned GET"]
+        ocr["ocr.rs<br/>extract_text(): shells out to tesseract"]
         mailer["mailer.rs<br/>Mailer: reset-link emails"]
         telemetry["telemetry.rs<br/>OTel/Jaeger bootstrap"]
         error_root["error.rs<br/>AppError (boot-time)"]
@@ -85,6 +89,7 @@ flowchart LR
     handlers --> nav
     handlers --> blob
     handlers --> mailer
+    handlers -.->|detached tokio::spawn| ocr
     state --> blob
     state --> mailer
 ```
@@ -171,20 +176,26 @@ Notes:
   (`documents_tags_idx`), queried via the `&&` (overlap) operator — chosen
   over a join table for simplicity at current scale.
 - `documents`'s `ocr_status`/`ocr_text`/`ocr_error` columns were added in
-  Feature 1 (the `/documents` list/detail page) even though upload + OCR
-  (Feature 2) isn't built yet — deliberately front-loaded so Feature 2
-  doesn't require a schema migration, just a writer for columns that
-  already exist.
+  Feature 1 (the `/documents` list/detail page) ahead of Feature 2 (upload
+  + OCR, now built) needing them, so Feature 2 required no schema
+  migration — just a writer for columns that already existed. `ocr_status`
+  is only ever `'skipped'` for `application/pdf` uploads today (PDF text
+  extraction is a future feature); the other four accepted content types
+  (`image/jpeg`/`png`/`tiff`/`webp`) go through `'pending'` →
+  `'processing'` → `'done'`/`'failed'`.
 - A session table also lives in this database, but it's owned and
   self-migrated by `tower-sessions-sqlx-store` (`PostgresStore::migrate()`)
   — it has no entry under `migrations/` and no corresponding Rust struct.
-- ⚠️ **The integration test suite runs against this same database**
-  (`DATABASE_URL`, defaults to `localhost:5432/doc_manager_db`) and
-  truncates `users`/`tenants` (cascading to everything FK'd off them) at
-  the start of every test. Running `cargo test` against a dev stack with
-  real signed-up accounts wipes them. No isolation exists between "the dev
-  database" and "the test database" today — worth fixing if this keeps
-  causing surprises.
+- The integration test suite runs against its **own** `doc_manager_db_test`
+  database (`tests/common/mod.rs::test_database_url`, override with
+  `TEST_DATABASE_URL`) — created automatically on first run, on the same
+  Postgres server as dev but deliberately never derived from `DATABASE_URL`.
+  Tests truncate `users`/`tenants` (cascading to everything FK'd off them)
+  at the start of every test, but only in this dedicated database — a
+  `cargo test` run can no longer wipe real signed-up accounts sitting in
+  the dev/Docker-deployed database. (This used to be a single shared
+  database — fixed after it caused exactly that data loss during this
+  project's Feature 2 development.)
 
 ## 5. Telemetry
 
@@ -224,7 +235,23 @@ system, not any one feature's design.
 - **`SQLX_OFFLINE=true` Docker builds only compile the release bin**, not
   test binaries — `cargo sqlx prepare --workspace` (no `--tests`) is
   sufficient for the image to build; test binaries run online against a
-  live `DATABASE_URL` instead.
+  live database instead (see the dedicated test database note above).
+- **A document's OCR pass can get stuck at `ocr_status = 'processing'`**
+  if the app restarts mid-job — axum's graceful shutdown only drains
+  in-flight HTTP connections, not the detached `tokio::spawn` task running
+  `tesseract`. `state::migrate` sweeps any `'processing'` row back to
+  `'pending'` on boot, but that only clears the stuck flag; there's no
+  retry yet, so a swept row just sits at `'pending'` until a future retry
+  feature exists. This also assumes a single running instance — it would
+  incorrectly steal another live instance's in-flight row if this app is
+  ever horizontally scaled.
+- **`tesseract-ocr` is a host/system dependency, not a Cargo one** — the
+  Docker runtime image installs it via `apt-get` (see `Dockerfile`), so
+  the containerized app needs nothing extra. Anyone running the app or
+  `cargo test`/`cargo run` *outside* Docker needs `tesseract-ocr` installed
+  on their own machine, or the document-upload OCR test soft-skips (checks
+  `which tesseract` first) and any real upload's `ocr_status` will sit at
+  `'processing'`/never advance.
 
 ## 7. Feature-by-feature decision log
 
@@ -234,6 +261,7 @@ first.
 
 | Feature | TDR | Chosen approach | Why (one line) |
 |---|---|---|---|
+| Document upload + OCR | [008](tdr/008_document_upload_design.md) | Shell out to the `tesseract` CLI via detached `tokio::spawn` (not an FFI crate, not a job-queue table) | Zero new Cargo dependency, matches the existing fire-and-forget mail-send pattern and CLAUDE.md's "decoupled... Tokio background green threads" wording exactly |
 | Documents dashboard (list/search/sort/edit) | [007](tdr/007_documents_dashboard_design.md) | Literal per-sort-mode `sqlx::query_as!` (5 branches) rather than a dynamically built `ORDER BY` | Preserves CLAUDE.md's compile-time-verified-query guarantee; accepted some duplication as the tradeoff |
 | Forgot / reset password | [006](tdr/006_forgot_password_design.md) | Single-use hashed token in `password_reset_tokens`, emailed via Mailpit/SMTP | Standard token-invalidation semantics; avoids storing raw tokens at rest |
 | Authenticated nav (avatar, logout) | [004](tdr/004_authenticated_nav_design.md) | `nav.rs` shared avatar-lookup helper reused by every template struct | One presign/lookup path instead of five duplicated ones |
@@ -245,8 +273,12 @@ first.
 
 Explicitly scoped out of what's built so far, to avoid being mistaken for
 gaps:
-- **Document upload** (regular file upload + OCR pipeline) — schema is
-  ready (`ocr_status` et al.), handler/UI not yet built.
+- **PDF text extraction** — PDFs are accepted, stored, and viewable via
+  document upload, but not OCR'd (`ocr_status = 'skipped'`); rasterizing
+  PDF pages for Tesseract is a larger follow-up.
+- **OCR retry** — a document stuck at `ocr_status = 'failed'` (or reset to
+  `'pending'` by the boot-time stuck-`'processing'` sweep) has no
+  automatic or manual retry path yet.
 - **Phone-camera scanning** (cross-device QR handoff) — deliberately split
   from upload as its own feature per explicit product direction, not
   started.

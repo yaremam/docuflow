@@ -26,7 +26,15 @@ pub fn app(state: AppState, session_layer: SessionManagerLayer<PostgresStore>) -
     // logging — that's a second, cheap extraction, not the auth check).
     let protected = Router::new()
         .route("/logout", post(handlers::auth::logout))
-        .route("/documents", get(handlers::documents::list))
+        .route(
+            "/documents",
+            get(handlers::documents::list)
+                .post(handlers::documents::create)
+                .layer(DefaultBodyLimit::max(
+                    handlers::documents::MAX_DOCUMENT_BYTES,
+                )),
+        )
+        .route("/documents/new", get(handlers::documents::new_form))
         .route(
             "/documents/:id",
             get(handlers::documents::show).post(handlers::documents::update),
