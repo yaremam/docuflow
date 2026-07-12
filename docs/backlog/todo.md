@@ -1,4 +1,3 @@
-- add OCR to PDF files
 - redo the OCR
 - extract and suggest issued date from image EXIF
 - extract and suggest issued date from the document OCR (After it is finished)

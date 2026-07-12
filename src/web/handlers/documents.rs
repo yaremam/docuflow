@@ -21,15 +21,25 @@ use crate::web::templates::{
 /// run bigger than an avatar photo.
 pub const MAX_DOCUMENT_BYTES: usize = 20 * 1024 * 1024;
 
-/// Content types accepted at all. Images in this set get real OCR; `PDF`
-/// is accepted and stored but not OCR'd yet (rasterizing PDF pages is a
-/// larger follow-up feature) — its rows are inserted with
-/// `ocr_status = 'skipped'`, matching the placeholder copy already in
-/// `document_show.html`. Everything else is rejected with 400. Also used by
-/// `web::handlers::scan` (feature 009's phone-camera capture) to decide OCR
-/// eligibility for the image types it accepts.
+/// Content types accepted at all. Kept separate from `ocr::PDF_CONTENT_TYPE`
+/// rather than folding PDF into this list, because `document_preview` below
+/// also reuses this exact list as its "can the browser inline this as
+/// `<img>`" check — a PDF needs an `<embed>`, not an `<img>`, even though
+/// (per `ocr_eligible` below) it is just as OCR-eligible as these image
+/// types. Everything not in this list or `OTHER_ACCEPTED_CONTENT_TYPES` is
+/// rejected with 400. Also used by `web::handlers::scan` (feature 009's
+/// phone-camera capture) to decide OCR eligibility for the image types it
+/// accepts.
 pub(crate) const OCR_ELIGIBLE_CONTENT_TYPES: &[&str] = &["image/jpeg", "image/png", "image/tiff", "image/webp"];
-const OTHER_ACCEPTED_CONTENT_TYPES: &[&str] = &["application/pdf"];
+const OTHER_ACCEPTED_CONTENT_TYPES: &[&str] = &[crate::ocr::PDF_CONTENT_TYPE];
+
+/// Whether a content type gets a real OCR pass: the direct-image types plus
+/// PDF — `ocr::extract` itself owns the decision of whether a given content
+/// type needs rasterizing first, this just decides whether to queue the
+/// background pass at all.
+fn ocr_eligible(content_type: &str) -> bool {
+    OCR_ELIGIBLE_CONTENT_TYPES.contains(&content_type) || content_type == crate::ocr::PDF_CONTENT_TYPE
+}
 
 fn format_date(date: time::Date) -> String {
     format!("{:04}-{:02}-{:02}", date.year(), date.month() as u8, date.day())
@@ -435,7 +445,7 @@ fn parse_metadata_field<T: TryFrom<String>>(text: String, error_message: &'stati
 /// request. Errors are caught and turned into `ocr_status = 'failed'`
 /// locally; there's no request left to propagate an `AppWebError` to.
 #[tracing::instrument(skip(state))]
-async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: String) {
+async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: String, content_type: String) {
     let _permit = match state.ocr_semaphore.acquire().await {
         Ok(permit) => permit,
         Err(_) => return, // semaphore closed only if AppState is being torn down
@@ -454,7 +464,7 @@ async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: 
     }
 
     let outcome = match state.blob.get_object(&blob_key).await {
-        Ok(bytes) => crate::ocr::extract_text(&bytes).await.map_err(|e| e.to_string()),
+        Ok(bytes) => crate::ocr::extract(&content_type, &bytes).await.map_err(|e| e.to_string()),
         Err(error) => Err(error.to_string()),
     };
 
@@ -519,11 +529,10 @@ pub(crate) async fn stream_document_to_blob(
 /// Inserts the document row for an already-blob-stored upload and queues its
 /// OCR pass — shared by `create` below and `web::handlers::scan::submit_scan`
 /// (phone camera capture, feature 009), both calling this right after
-/// `stream_document_to_blob` above. OCR-eligibility is always decided from
-/// the shared `OCR_ELIGIBLE_CONTENT_TYPES` list, even though feature 008's
-/// desktop upload and feature 009's phone capture validate `content_type`
-/// against their own, differently-scoped accepted sets before ever reaching
-/// here.
+/// `stream_document_to_blob` above. OCR-eligibility is always decided by the
+/// shared `ocr_eligible` helper, even though feature 008's desktop upload
+/// and feature 009's phone capture validate `content_type` against their
+/// own, differently-scoped accepted sets before ever reaching here.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn insert_document_and_queue_ocr(
     state: &AppState,
@@ -538,8 +547,8 @@ pub(crate) async fn insert_document_and_queue_ocr(
     tags: Vec<String>,
     date_issued: Option<time::Date>,
 ) -> Result<(), AppWebError> {
-    let ocr_eligible = OCR_ELIGIBLE_CONTENT_TYPES.contains(&content_type.as_str());
-    let initial_ocr_status = if ocr_eligible { "pending" } else { "skipped" };
+    let is_ocr_eligible = ocr_eligible(&content_type);
+    let initial_ocr_status = if is_ocr_eligible { "pending" } else { "skipped" };
 
     sqlx::query!(
         "insert into documents
@@ -560,10 +569,11 @@ pub(crate) async fn insert_document_and_queue_ocr(
     .execute(&state.pool)
     .await?;
 
-    if ocr_eligible {
+    if is_ocr_eligible {
         let ocr_state = state.clone();
         let key = blob_key.clone();
-        tokio::spawn(run_ocr(ocr_state, document_id, tenant_id, key).instrument(tracing::Span::current()));
+        let ct = content_type.clone();
+        tokio::spawn(run_ocr(ocr_state, document_id, tenant_id, key, ct).instrument(tracing::Span::current()));
     }
 
     Ok(())

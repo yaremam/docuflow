@@ -144,7 +144,7 @@ async fn disallowed_content_type_is_rejected() {
 }
 
 #[tokio::test]
-async fn pdf_upload_is_accepted_with_ocr_skipped() {
+async fn pdf_upload_is_ocr_eligible_not_skipped() {
     let app = common::test_state().await;
     let login = common::signup_and_login(&app, "pdf.docs@example.com", "documentspassword").await;
     let cookie = common::session_cookie(&login).expect("login should set a session cookie");
@@ -165,7 +165,42 @@ async fn pdf_upload_is_accepted_with_ocr_skipped() {
     assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
     let id = document_id_from_location(&common::location(&response).unwrap());
     let row = find_document(&app, id).await.expect("row should exist");
-    assert_eq!(row.ocr_status, "skipped");
+    assert!(
+        row.ocr_status == "pending" || row.ocr_status == "processing" || row.ocr_status == "done" || row.ocr_status == "failed",
+        "PDF uploads are OCR-eligible now, never inserted as 'skipped': got {}",
+        row.ocr_status
+    );
+}
+
+#[tokio::test]
+async fn corrupt_pdf_fails_ocr_gracefully_instead_of_panicking() {
+    if !common::command_on_path("pdftoppm") {
+        eprintln!("skipping corrupt_pdf_fails_ocr_gracefully_instead_of_panicking: `pdftoppm` not found on PATH");
+        return;
+    }
+
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "corruptpdf.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+
+    let response = common::post_multipart_parts_with_cookie(
+        &app,
+        "/documents",
+        &cookie,
+        &[MultipartPart::File {
+            name: "file",
+            filename: "not_really_a_pdf.pdf",
+            content_type: "application/pdf",
+            bytes: b"%PDF-1.4 this is not a well-formed pdf and pdftoppm cannot rasterize it",
+        }],
+    )
+    .await;
+    assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
+    let id = document_id_from_location(&common::location(&response).unwrap());
+
+    let outcome = common::wait_for_ocr_outcome(&app, id, std::time::Duration::from_secs(15)).await;
+    assert_eq!(outcome.status, "failed", "an unrasterizable pdf should end up failed, not stuck or panicking");
+    assert!(outcome.error.is_some(), "a failed PDF OCR pass should record ocr_error");
 }
 
 #[tokio::test]
@@ -271,7 +306,7 @@ async fn get_documents_new_reaches_the_new_document_form_not_show() {
 
 #[tokio::test]
 async fn image_upload_is_actually_ocrd_by_tesseract() {
-    if std::process::Command::new("which").arg("tesseract").output().map(|o| !o.status.success()).unwrap_or(true) {
+    if !common::command_on_path("tesseract") {
         eprintln!("skipping image_upload_is_actually_ocrd_by_tesseract: `tesseract` not found on PATH");
         return;
     }
@@ -296,31 +331,47 @@ async fn image_upload_is_actually_ocrd_by_tesseract() {
     assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
     let id = document_id_from_location(&common::location(&response).unwrap());
 
-    // The OCR pass runs as a detached `tokio::spawn` task, so poll instead
-    // of a fixed sleep: faster on the common case, more headroom under a
-    // slow CI box than a single guess would give. `tokio::time::sleep`
-    // between checks is required (not a busy loop) so the single-threaded
-    // `#[tokio::test]` runtime actually gets to drive the detached task
-    // forward.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-    let mut final_status = String::new();
-    let mut ocr_text: Option<String> = None;
-    while std::time::Instant::now() < deadline {
-        let row = sqlx::query!("select ocr_status, ocr_text from documents where id = $1", id)
-            .fetch_one(&app.state.pool)
-            .await
-            .unwrap();
-        if row.ocr_status == "done" || row.ocr_status == "failed" {
-            final_status = row.ocr_status;
-            ocr_text = row.ocr_text;
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let outcome = common::wait_for_ocr_outcome(&app, id, std::time::Duration::from_secs(15)).await;
+    assert_eq!(outcome.status, "done", "ocr should complete within the timeout");
+    assert!(
+        outcome.text.as_deref().unwrap_or("").contains("DOCUFLOW OCR SAMPLE"),
+        "expected extracted text to contain the fixture's text, got: {:?}",
+        outcome.text
+    );
+}
+
+#[tokio::test]
+async fn pdf_upload_is_rasterized_and_ocrd_by_tesseract() {
+    if !common::command_on_path("tesseract") || !common::command_on_path("pdftoppm") {
+        eprintln!("skipping pdf_upload_is_rasterized_and_ocrd_by_tesseract: `tesseract` and/or `pdftoppm` not found on PATH");
+        return;
     }
 
-    assert_eq!(final_status, "done", "ocr should complete within the timeout");
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "realpdfocr.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+
+    let bytes = std::fs::read("tests/fixtures/ocr_sample.pdf").unwrap();
+    let response = common::post_multipart_parts_with_cookie(
+        &app,
+        "/documents",
+        &cookie,
+        &[MultipartPart::File {
+            name: "file",
+            filename: "ocr_sample.pdf",
+            content_type: "application/pdf",
+            bytes: &bytes,
+        }],
+    )
+    .await;
+    assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
+    let id = document_id_from_location(&common::location(&response).unwrap());
+
+    let outcome = common::wait_for_ocr_outcome(&app, id, std::time::Duration::from_secs(15)).await;
+    assert_eq!(outcome.status, "done", "pdf ocr should complete within the timeout, got text: {:?}", outcome.text);
     assert!(
-        ocr_text.as_deref().unwrap_or("").contains("DOCUFLOW OCR SAMPLE"),
-        "expected extracted text to contain the fixture's text, got: {ocr_text:?}"
+        outcome.text.as_deref().unwrap_or("").contains("DOCUFLOW OCR SAMPLE PDF"),
+        "expected extracted text to contain the fixture's text, got: {:?}",
+        outcome.text
     );
 }

@@ -378,3 +378,38 @@ pub fn session_cookie(response: &axum::http::Response<axum::body::Body>) -> Opti
         .next()
         .map(str::to_string)
 }
+
+/// Whether `name` resolves on `PATH` — used to soft-skip real-OCR tests
+/// (`tesseract`, `pdftoppm`) rather than failing where the binary isn't
+/// installed.
+pub fn command_on_path(name: &str) -> bool {
+    std::process::Command::new("which").arg(name).output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+pub struct OcrOutcome {
+    pub status: String,
+    pub text: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Polls `documents.ocr_status` for `id` until it reaches a terminal state
+/// (`done`/`failed`) or `timeout` elapses, whichever comes first — the OCR
+/// pass runs as a detached `tokio::spawn` task, so polling (not a fixed
+/// sleep) both keeps the common case fast and gives a slow CI box more
+/// headroom than a single guess would. On timeout, `status` is left empty,
+/// which every caller's `assert_eq!(status, "done"/"failed", ...)` already
+/// turns into a clear failure.
+pub async fn wait_for_ocr_outcome(app: &TestApp, id: uuid::Uuid, timeout: std::time::Duration) -> OcrOutcome {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        let row = sqlx::query!("select ocr_status, ocr_text, ocr_error from documents where id = $1", id)
+            .fetch_one(&app.state.pool)
+            .await
+            .unwrap();
+        if row.ocr_status == "done" || row.ocr_status == "failed" {
+            return OcrOutcome { status: row.ocr_status, text: row.ocr_text, error: row.ocr_error };
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    OcrOutcome { status: String::new(), text: None, error: None }
+}

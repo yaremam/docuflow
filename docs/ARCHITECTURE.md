@@ -26,6 +26,7 @@ flowchart TB
     SMTP[["SMTP (Mailpit dev / real relay prod)<br/>password-reset emails"]]
     Jaeger[["Jaeger<br/>OTLP gRPC :4317, UI :16686"]]
     Tesseract[["tesseract CLI<br/>(subprocess, not a network service)"]]
+    Poppler[["pdftoppm CLI<br/>(subprocess, rasterizes PDF pages)"]]
 
     Browser -->|HTTP forms, cookies| Router
     Phone -->|scans QR, uploads a photo,<br/>no session cookie| Router
@@ -37,6 +38,7 @@ flowchart TB
     Handlers -->|aws-sdk-s3| S3
     Handlers -->|lettre| SMTP
     Handlers -.->|tokio::spawn, detached| Tesseract
+    Handlers -.->|tokio::spawn, detached,<br/>PDF only, before Tesseract| Poppler
     App -.->|spans, OTel Baggage| Jaeger
 ```
 
@@ -56,6 +58,7 @@ page, just one reached without a session cookie (see §3/§4 below).
 | Auth | `argon2` | password hashing only — no OAuth/SSO yet |
 | Blob storage | `aws-sdk-s3` against LocalStack (dev) / real S3 (prod) | same code path both ways, chosen via env vars only |
 | OCR | `tesseract` CLI via `tokio::process::Command` | shelled out, not an FFI crate — `tesseract-ocr` apt package in `Dockerfile`'s runtime stage, zero new Cargo dependency |
+| PDF rasterization | `pdftoppm` (`poppler-utils`) CLI via `tokio::process::Command` | same "shell out, don't link" precedent as `tesseract`; rasterizes each page to a PNG, then each page goes through the existing image-OCR path — see TDR 010 |
 | QR codes | `qrcode` crate, `svg` feature only | pure Rust, no system dependency; renders inline `<svg>` colored via `var(--ink)`/`var(--paper-raised)` so it follows the page's theme |
 | Mail | `lettre` over SMTP | Mailpit in dev, real relay in prod, selected by `SMTP_INSECURE` |
 | Telemetry | `tracing` + `tracing-opentelemetry` + OTLP/gRPC → Jaeger | see [§5](#5-telemetry) |
@@ -80,7 +83,7 @@ flowchart LR
     subgraph core["src/ (crate root)"]
         domain["domain.rs<br/>TenantId, UserId, DocumentId"]
         blob["blob.rs<br/>BlobStore: streaming multipart<br/>upload, get_object, presigned GET"]
-        ocr["ocr.rs<br/>extract_text(): shells out to tesseract"]
+        ocr["ocr.rs<br/>extract(content_type, bytes): dispatch entry point<br/>rasterizes PDFs via pdftoppm first, then shells out to tesseract"]
         mailer["mailer.rs<br/>Mailer: reset-link emails"]
         telemetry["telemetry.rs<br/>OTel/Jaeger bootstrap"]
         error_root["error.rs<br/>AppError (boot-time)"]
@@ -206,11 +209,12 @@ Notes:
 - `documents`'s `ocr_status`/`ocr_text`/`ocr_error` columns were added in
   Feature 1 (the `/documents` list/detail page) ahead of Feature 2 (upload
   + OCR, now built) needing them, so Feature 2 required no schema
-  migration — just a writer for columns that already existed. `ocr_status`
-  is only ever `'skipped'` for `application/pdf` uploads today (PDF text
-  extraction is a future feature); the other four accepted content types
-  (`image/jpeg`/`png`/`tiff`/`webp`) go through `'pending'` →
-  `'processing'` → `'done'`/`'failed'`.
+  migration — just a writer for columns that already existed. All five
+  accepted content types (`image/jpeg`/`png`/`tiff`/`webp` and, since
+  feature 010, `application/pdf`) go through `'pending'` → `'processing'`
+  → `'done'`/`'failed'`; `'skipped'` is now only a historical value for
+  PDF rows uploaded before feature 010 shipped (never assigned to new
+  uploads).
 - `scan_sessions` (feature 009) follows `password_reset_tokens`'s shape —
   only `token_hash` is ever persisted, never the raw token embedded in the
   QR code. Unlike `password_reset_tokens`, expiry (`expires_at`, a fixed
@@ -290,12 +294,14 @@ system, not any one feature's design.
   phone loading it is never logged in, by design (see TDR 009). Tenancy for
   those two routes comes from the `scan_sessions` row the path token
   resolves to, checked by hand inside `handlers::scan`.
-- **`tesseract-ocr` is a host/system dependency, not a Cargo one** — the
-  Docker runtime image installs it via `apt-get` (see `Dockerfile`), so
-  the containerized app needs nothing extra. Anyone running the app or
-  `cargo test`/`cargo run` *outside* Docker needs `tesseract-ocr` installed
-  on their own machine, or the document-upload OCR test soft-skips (checks
-  `which tesseract` first) and any real upload's `ocr_status` will sit at
+- **`tesseract-ocr` and (since feature 010) `poppler-utils` are
+  host/system dependencies, not Cargo ones** — the Docker runtime image
+  installs both via `apt-get` (see `Dockerfile`), so the containerized app
+  needs nothing extra. Anyone running the app or `cargo test`/`cargo run`
+  *outside* Docker needs `tesseract-ocr` and `poppler-utils` (for its
+  `pdftoppm` binary) installed on their own machine, or the relevant
+  document-upload OCR test soft-skips (checks `which tesseract`/
+  `which pdftoppm` first) and any real upload's `ocr_status` will sit at
   `'processing'`/never advance.
 
 ## 7. Feature-by-feature decision log
@@ -306,6 +312,7 @@ first.
 
 | Feature | TDR | Chosen approach | Why (one line) |
 |---|---|---|---|
+| PDF OCR | [010](tdr/010_pdf_ocr_design.md) | Shell out to `pdftoppm` (poppler-utils) to rasterize each page, then run the existing `tesseract` image-OCR path per page | Stays consistent with the `tesseract` precedent (CLI tool over native-library binding); avoids a second, inconsistent way of vendoring a native PDF dependency |
 | Phone-camera scan handoff | [009](tdr/009_phone_camera_scan_design.md) | Single-use hashed `scan_sessions` token in a QR code; native `<input capture>` on the phone, not WebRTC; `<meta refresh>` polling, not JS | No new client-side JS anywhere in the app; reuses the `password_reset_tokens` token pattern and the OCR-status `<meta refresh>` idiom instead of inventing new ones |
 | Document upload + OCR | [008](tdr/008_document_upload_design.md) | Shell out to the `tesseract` CLI via detached `tokio::spawn` (not an FFI crate, not a job-queue table) | Zero new Cargo dependency, matches the existing fire-and-forget mail-send pattern and CLAUDE.md's "decoupled... Tokio background green threads" wording exactly |
 | Documents dashboard (list/search/sort/edit) | [007](tdr/007_documents_dashboard_design.md) | Literal per-sort-mode `sqlx::query_as!` (5 branches) rather than a dynamically built `ORDER BY` | Preserves CLAUDE.md's compile-time-verified-query guarantee; accepted some duplication as the tradeoff |
@@ -319,9 +326,6 @@ first.
 
 Explicitly scoped out of what's built so far, to avoid being mistaken for
 gaps:
-- **PDF text extraction** — PDFs are accepted, stored, and viewable via
-  document upload, but not OCR'd (`ocr_status = 'skipped'`); rasterizing
-  PDF pages for Tesseract is a larger follow-up.
 - **OCR retry** — a document stuck at `ocr_status = 'failed'` (or reset to
   `'pending'` by the boot-time stuck-`'processing'` sweep) has no
   automatic or manual retry path yet.
@@ -331,3 +335,7 @@ gaps:
 - **Multi-user tenants** (invite flow, membership roles) — schema/types
   already distinguish `TenantId`/`UserId` in anticipation, but no UI or
   membership table exists.
+- **Retroactive PDF reprocessing** — PDFs uploaded before feature 010
+  shipped keep `ocr_status = 'skipped'` forever; they are not
+  automatically re-queued for the now-available PDF OCR pass. Folds into
+  the OCR retry item above once that exists.
