@@ -39,6 +39,7 @@ pub fn app(state: AppState, session_layer: SessionManagerLayer<PostgresStore>) -
             "/documents/:id",
             get(handlers::documents::show).post(handlers::documents::update),
         )
+        .route("/scan", get(handlers::scan::new_scan))
         .route(
             "/profile",
             get(handlers::profile::show).post(handlers::profile::update),
@@ -74,6 +75,19 @@ pub fn app(state: AppState, session_layer: SessionManagerLayer<PostgresStore>) -
             "/reset-password",
             get(handlers::password_reset::reset_password_form)
                 .post(handlers::password_reset::reset_password_submit),
+        )
+        .route(
+            // Deliberately outside `protected` — the phone loading this
+            // never has a session cookie, by design (see
+            // `docs/tdr/009_phone_camera_scan_design.md` §1/§3). Tenancy is
+            // instead resolved inside `web::handlers::scan` from the
+            // path token itself.
+            "/scan/:token",
+            get(handlers::scan::show_scan_phone)
+                .post(handlers::scan::submit_scan)
+                .layer(DefaultBodyLimit::max(
+                    handlers::documents::MAX_DOCUMENT_BYTES,
+                )),
         )
         .merge(protected)
         .layer(TraceLayer::new_for_http())

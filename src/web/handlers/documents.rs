@@ -23,8 +23,10 @@ pub const MAX_DOCUMENT_BYTES: usize = 20 * 1024 * 1024;
 /// is accepted and stored but not OCR'd yet (rasterizing PDF pages is a
 /// larger follow-up feature) — its rows are inserted with
 /// `ocr_status = 'skipped'`, matching the placeholder copy already in
-/// `document_show.html`. Everything else is rejected with 400.
-const OCR_ELIGIBLE_CONTENT_TYPES: &[&str] = &["image/jpeg", "image/png", "image/tiff", "image/webp"];
+/// `document_show.html`. Everything else is rejected with 400. Also used by
+/// `web::handlers::scan` (feature 009's phone-camera capture) to decide OCR
+/// eligibility for the image types it accepts.
+pub(crate) const OCR_ELIGIBLE_CONTENT_TYPES: &[&str] = &["image/jpeg", "image/png", "image/tiff", "image/webp"];
 const OTHER_ACCEPTED_CONTENT_TYPES: &[&str] = &["application/pdf"];
 
 fn format_date(date: time::Date) -> String {
@@ -384,6 +386,123 @@ async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: 
     }
 }
 
+/// Streams `field` to blob storage under `documents/{user_id}/{document_id}`
+/// and returns the resulting byte count. Split out from
+/// `insert_document_and_queue_ocr` below specifically so `create`'s
+/// "metadata fields must arrive before the file field" check can still
+/// reject a request (with no document row ever created) even *after* this
+/// stream has already run — the file field is necessarily read as it's
+/// encountered (multipart bodies can't be rewound to check what follows
+/// first), so only the upload is unavoidable in that rejected case, never
+/// the DB row; the S3 object it leaves behind is an accepted, harmless
+/// orphan (nothing ever references it).
+async fn stream_document_to_blob(
+    state: &AppState,
+    user_id: Uuid,
+    document_id: Uuid,
+    content_type: &str,
+    field: axum::extract::multipart::Field<'_>,
+) -> Result<(String, i64), AppWebError> {
+    let blob_key = format!("documents/{user_id}/{document_id}");
+    let file_size_bytes = state
+        .blob
+        .stream_upload(&blob_key, content_type, field, MAX_DOCUMENT_BYTES)
+        .await?;
+    Ok((blob_key, file_size_bytes as i64))
+}
+
+/// Inserts the document row for an already-blob-stored upload and queues its
+/// OCR pass — shared by `create` below (called only once its whole
+/// multipart body has validated, via `stream_document_to_blob` +
+/// `store_and_queue_ocr`'s two-phase split) and
+/// `web::handlers::scan::submit_scan` (phone camera capture, feature 009,
+/// via `store_and_queue_ocr` directly — the phone flow has no metadata
+/// fields that could invalidate an already-streamed file, so it doesn't need
+/// the split). OCR-eligibility is always decided from the shared
+/// `OCR_ELIGIBLE_CONTENT_TYPES` list, even though feature 008's desktop
+/// upload and feature 009's phone capture validate `content_type` against
+/// their own, differently-scoped accepted sets before ever reaching here.
+#[allow(clippy::too_many_arguments)]
+async fn insert_document_and_queue_ocr(
+    state: &AppState,
+    tenant_id: Uuid,
+    user_id: Uuid,
+    document_id: Uuid,
+    blob_key: String,
+    original_filename: String,
+    content_type: String,
+    file_size_bytes: i64,
+    title: Option<String>,
+    tags: Vec<String>,
+    date_issued: Option<time::Date>,
+) -> Result<(), AppWebError> {
+    let ocr_eligible = OCR_ELIGIBLE_CONTENT_TYPES.contains(&content_type.as_str());
+    let initial_ocr_status = if ocr_eligible { "pending" } else { "skipped" };
+
+    sqlx::query!(
+        "insert into documents
+            (id, tenant_id, user_id, original_filename, title, content_type, file_size_bytes, blob_key, tags, date_issued, ocr_status)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+        document_id,
+        tenant_id,
+        user_id,
+        original_filename,
+        title,
+        content_type,
+        file_size_bytes,
+        blob_key,
+        &tags,
+        date_issued,
+        initial_ocr_status,
+    )
+    .execute(&state.pool)
+    .await?;
+
+    if ocr_eligible {
+        let ocr_state = state.clone();
+        let key = blob_key.clone();
+        tokio::spawn(run_ocr(ocr_state, document_id, tenant_id, key).instrument(tracing::Span::current()));
+    }
+
+    Ok(())
+}
+
+/// Convenience one-shot combining both phases above — the shape
+/// `web::handlers::scan::submit_scan` calls directly, since the phone-scan
+/// flow has exactly one field (the photo) and no ordering hazard to guard
+/// against.
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(state, field, original_filename, title, tags))]
+pub(crate) async fn store_and_queue_ocr(
+    state: &AppState,
+    tenant_id: Uuid,
+    user_id: Uuid,
+    document_id: Uuid,
+    original_filename: String,
+    content_type: String,
+    field: axum::extract::multipart::Field<'_>,
+    title: Option<String>,
+    tags: Vec<String>,
+    date_issued: Option<time::Date>,
+) -> Result<(), AppWebError> {
+    let (blob_key, file_size_bytes) =
+        stream_document_to_blob(state, user_id, document_id, &content_type, field).await?;
+    insert_document_and_queue_ocr(
+        state,
+        tenant_id,
+        user_id,
+        document_id,
+        blob_key,
+        original_filename,
+        content_type,
+        file_size_bytes,
+        title,
+        tags,
+        date_issued,
+    )
+    .await
+}
+
 #[tracing::instrument(skip(state, tenancy, multipart))]
 pub async fn create(
     tenancy: TenantContext,
@@ -393,9 +512,12 @@ pub async fn create(
     let mut title = ProfileField::default();
     let mut tags = Tags::default();
     let mut date_issued = DateIssuedField::default();
-    let mut uploaded: Option<(String, String, i64)> = None; // (content_type, original_filename, file_size_bytes)
+    // (blob_key, original_filename, content_type, file_size_bytes) — the DB
+    // insert is deferred until after the whole multipart body has validated
+    // (see `stream_document_to_blob`'s doc comment), so this just remembers
+    // what to insert once we know no later field will reject the request.
+    let mut uploaded: Option<(String, String, String, i64)> = None;
     let document_id = Uuid::new_v4();
-    let blob_key = format!("documents/{}/{document_id}", tenancy.user_id.0);
 
     while let Some(field) = multipart.next_field().await? {
         let Some(name) = field.name().map(str::to_string) else {
@@ -437,47 +559,32 @@ pub async fn create(
                 {
                     return Ok(bad_request("unsupported file type"));
                 }
-                let file_size_bytes = state
-                    .blob
-                    .stream_upload(&blob_key, &content_type, field, MAX_DOCUMENT_BYTES)
-                    .await?;
-                uploaded = Some((content_type, original_filename, file_size_bytes as i64));
+                let (blob_key, file_size_bytes) =
+                    stream_document_to_blob(&state, tenancy.user_id.0, document_id, &content_type, field).await?;
+                uploaded = Some((blob_key, original_filename, content_type, file_size_bytes));
             }
             _ => {}
         }
     }
 
-    let Some((content_type, original_filename, file_size_bytes)) = uploaded else {
+    let Some((blob_key, original_filename, content_type, file_size_bytes)) = uploaded else {
         return Ok(bad_request("no file provided"));
     };
 
-    let ocr_eligible = OCR_ELIGIBLE_CONTENT_TYPES.contains(&content_type.as_str());
-    let initial_ocr_status = if ocr_eligible { "pending" } else { "skipped" };
-
-    sqlx::query!(
-        "insert into documents
-            (id, tenant_id, user_id, original_filename, title, content_type, file_size_bytes, blob_key, tags, date_issued, ocr_status)
-         values ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-        document_id,
+    insert_document_and_queue_ocr(
+        &state,
         tenancy.tenant_id.0,
+        tenancy.user_id.0,
+        document_id,
+        blob_key,
         original_filename,
-        title.into_option(),
         content_type,
         file_size_bytes,
-        blob_key,
-        &tags.into_vec(),
+        title.into_option(),
+        tags.into_vec(),
         date_issued.into_option(),
-        initial_ocr_status,
     )
-    .execute(&state.pool)
     .await?;
-
-    if ocr_eligible {
-        let ocr_state = state.clone();
-        let tenant_id = tenancy.tenant_id.0;
-        let key = blob_key.clone();
-        tokio::spawn(run_ocr(ocr_state, document_id, tenant_id, key).instrument(tracing::Span::current()));
-    }
 
     Ok(Redirect::to(&format!("/documents/{document_id}?uploaded=true")).into_response())
 }

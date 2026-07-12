@@ -25,6 +25,16 @@ pub enum AppWebError {
     Mail(String),
     #[error("this reset link is invalid, expired, or already used")]
     InvalidResetToken,
+    #[error("qr code generation error: {0}")]
+    QrGeneration(#[from] qrcode::types::QrError),
+    /// Should never actually happen — `scan_sessions.status` only ever
+    /// becomes `'captured'` in the same `UPDATE` that also sets
+    /// `document_id` (see `web::handlers::scan::submit_scan`). Surfacing
+    /// this as a `Result` rather than `.expect()`-ing keeps that assumption
+    /// from ever becoming a panic if it's wrong, per CLAUDE.md's zero-panic
+    /// rule.
+    #[error("scan session is captured but missing its document id")]
+    InconsistentScanSession,
     #[error("authentication required")]
     Unauthenticated,
     #[error("not found")]

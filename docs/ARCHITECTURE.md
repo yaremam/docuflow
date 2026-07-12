@@ -16,20 +16,23 @@ flowchart TB
 
     subgraph App["DocuFlow (Axum + Tokio)"]
         Router["Router<br/>tower-sessions layer + TenantContext extractor"]
-        Handlers["Handlers<br/>auth · profile · documents · password_reset"]
+        Handlers["Handlers<br/>auth · profile · documents ·<br/>password_reset · scan"]
         Templates["Askama templates<br/>(ledger &amp; stamp design system)"]
     end
 
-    Postgres[("PostgreSQL<br/>users · tenants · documents ·<br/>password_reset_tokens · sessions")]
+    Phone["Phone browser<br/>(never logged in)"]
+    Postgres[("PostgreSQL<br/>users · tenants · documents ·<br/>password_reset_tokens · scan_sessions · sessions")]
     S3[("S3 / LocalStack<br/>profile pictures, document blobs")]
     SMTP[["SMTP (Mailpit dev / real relay prod)<br/>password-reset emails"]]
     Jaeger[["Jaeger<br/>OTLP gRPC :4317, UI :16686"]]
     Tesseract[["tesseract CLI<br/>(subprocess, not a network service)"]]
 
     Browser -->|HTTP forms, cookies| Router
+    Phone -->|scans QR, uploads a photo,<br/>no session cookie| Router
     Router --> Handlers
     Handlers --> Templates
     Templates -->|HTML| Browser
+    Templates -->|HTML| Phone
     Handlers -->|sqlx| Postgres
     Handlers -->|aws-sdk-s3| S3
     Handlers -->|lettre| SMTP
@@ -38,7 +41,9 @@ flowchart TB
 ```
 
 Everything is server-rendered — no client-side app framework or JSON API;
-handlers return HTML (Askama templates) or a redirect.
+handlers return HTML (Askama templates) or a redirect. The phone side of
+feature 009's scan handoff is no exception: it's another server-rendered
+page, just one reached without a session cookie (see §3/§4 below).
 
 ## 2. Core stack
 
@@ -51,6 +56,7 @@ handlers return HTML (Askama templates) or a redirect.
 | Auth | `argon2` | password hashing only — no OAuth/SSO yet |
 | Blob storage | `aws-sdk-s3` against LocalStack (dev) / real S3 (prod) | same code path both ways, chosen via env vars only |
 | OCR | `tesseract` CLI via `tokio::process::Command` | shelled out, not an FFI crate — `tesseract-ocr` apt package in `Dockerfile`'s runtime stage, zero new Cargo dependency |
+| QR codes | `qrcode` crate, `svg` feature only | pure Rust, no system dependency; renders inline `<svg>` colored via `var(--ink)`/`var(--paper-raised)` so it follows the page's theme |
 | Mail | `lettre` over SMTP | Mailpit in dev, real relay in prod, selected by `SMTP_INSECURE` |
 | Telemetry | `tracing` + `tracing-opentelemetry` + OTLP/gRPC → Jaeger | see [§5](#5-telemetry) |
 | Errors | `thiserror`, two-tier: `AppError` (boot) / `AppWebError` (request) | zero `.unwrap()`/`.expect()`/`panic!()` in request-handling code, per CLAUDE.md |
@@ -63,7 +69,7 @@ flowchart LR
     subgraph web["src/web/"]
         router["router.rs<br/>route table"]
         tenancy["tenancy.rs<br/>TenantContext /<br/>MaybeTenantContext extractors"]
-        handlers["handlers/<br/>auth · profile · documents ·<br/>password_reset · landing · health"]
+        handlers["handlers/<br/>auth · profile · documents ·<br/>password_reset · scan · landing · health"]
         forms["forms.rs<br/>validated newtypes<br/>(EmailAddress, Password, Tags, ...)"]
         templates["templates.rs<br/>Askama template structs"]
         error_web["error.rs<br/>AppWebError → HTTP response"]
@@ -109,6 +115,16 @@ flowchart LR
   (Alternatives G/H/I).
 - **`nav.rs`** centralizes the avatar-lookup-and-presign logic so every
   template struct across five+ handlers doesn't reimplement it.
+- **`handlers/scan.rs`** (feature 009) is the one place a request reaches a
+  document-creating handler *without* going through the `TenantContext`
+  extractor — `GET /scan/:token` and `POST /scan/:token` sit in the public
+  `pages` router group (a phone never has a session cookie), and resolve
+  tenancy from the `scan_sessions` row a hashed path token matches instead.
+  `handlers::documents` exposes `store_and_queue_ocr`/
+  `insert_document_and_queue_ocr` (split so `documents::create`'s
+  "metadata after the file field is rejected" guarantee still holds) as the
+  shared blob-upload-plus-DB-insert-plus-OCR-spawn core both this and the
+  desktop `POST /documents` handler call — one pipeline, two entry points.
 
 ## 4. Database schema
 
@@ -118,6 +134,8 @@ erDiagram
     TENANTS ||--o{ DOCUMENTS : "scopes"
     USERS ||--o{ DOCUMENTS : "owns"
     USERS ||--o{ PASSWORD_RESET_TOKENS : "requests"
+    USERS ||--o{ SCAN_SESSIONS : "requests"
+    DOCUMENTS |o--o| SCAN_SESSIONS : "created by"
 
     TENANTS {
         uuid id PK
@@ -163,6 +181,16 @@ erDiagram
         timestamptz created_at
         timestamptz updated_at
     }
+    SCAN_SESSIONS {
+        uuid id PK
+        uuid tenant_id FK
+        uuid user_id FK
+        text token_hash UK
+        text status "pending|captured"
+        uuid document_id FK "nullable until captured"
+        timestamptz expires_at
+        timestamptz created_at
+    }
 ```
 
 Notes:
@@ -183,6 +211,18 @@ Notes:
   extraction is a future feature); the other four accepted content types
   (`image/jpeg`/`png`/`tiff`/`webp`) go through `'pending'` →
   `'processing'` → `'done'`/`'failed'`.
+- `scan_sessions` (feature 009) follows `password_reset_tokens`'s shape —
+  only `token_hash` is ever persisted, never the raw token embedded in the
+  QR code. Unlike `password_reset_tokens`, expiry (`expires_at`, a fixed
+  10-minute TTL from creation) is enforced entirely in each query's `WHERE`
+  clause (`status = 'captured' or expires_at > now()`) rather than compared
+  against `time::OffsetDateTime::now_utc()` in Rust, avoiding any
+  app/DB-clock-skew concern. `document_id` is `null` until a phone actually
+  captures a photo, at which point it and `status = 'captured'` are set
+  together in the same `UPDATE` — `handlers::scan` treats "captured but no
+  `document_id`" as an invariant violation (`AppWebError::
+  InconsistentScanSession`) rather than something that can legitimately
+  happen.
 - A session table also lives in this database, but it's owned and
   self-migrated by `tower-sessions-sqlx-store` (`PostgresStore::migrate()`)
   — it has no entry under `migrations/` and no corresponding Rust struct.
@@ -245,6 +285,11 @@ system, not any one feature's design.
   feature exists. This also assumes a single running instance — it would
   incorrectly steal another live instance's in-flight row if this app is
   ever horizontally scaled.
+- **`/scan/:token` is deliberately outside the `protected` router group** —
+  don't "fix" this by moving it under `TenantContext`'s `route_layer`; the
+  phone loading it is never logged in, by design (see TDR 009). Tenancy for
+  those two routes comes from the `scan_sessions` row the path token
+  resolves to, checked by hand inside `handlers::scan`.
 - **`tesseract-ocr` is a host/system dependency, not a Cargo one** — the
   Docker runtime image installs it via `apt-get` (see `Dockerfile`), so
   the containerized app needs nothing extra. Anyone running the app or
@@ -261,6 +306,7 @@ first.
 
 | Feature | TDR | Chosen approach | Why (one line) |
 |---|---|---|---|
+| Phone-camera scan handoff | [009](tdr/009_phone_camera_scan_design.md) | Single-use hashed `scan_sessions` token in a QR code; native `<input capture>` on the phone, not WebRTC; `<meta refresh>` polling, not JS | No new client-side JS anywhere in the app; reuses the `password_reset_tokens` token pattern and the OCR-status `<meta refresh>` idiom instead of inventing new ones |
 | Document upload + OCR | [008](tdr/008_document_upload_design.md) | Shell out to the `tesseract` CLI via detached `tokio::spawn` (not an FFI crate, not a job-queue table) | Zero new Cargo dependency, matches the existing fire-and-forget mail-send pattern and CLAUDE.md's "decoupled... Tokio background green threads" wording exactly |
 | Documents dashboard (list/search/sort/edit) | [007](tdr/007_documents_dashboard_design.md) | Literal per-sort-mode `sqlx::query_as!` (5 branches) rather than a dynamically built `ORDER BY` | Preserves CLAUDE.md's compile-time-verified-query guarantee; accepted some duplication as the tradeoff |
 | Forgot / reset password | [006](tdr/006_forgot_password_design.md) | Single-use hashed token in `password_reset_tokens`, emailed via Mailpit/SMTP | Standard token-invalidation semantics; avoids storing raw tokens at rest |
@@ -279,9 +325,9 @@ gaps:
 - **OCR retry** — a document stuck at `ocr_status = 'failed'` (or reset to
   `'pending'` by the boot-time stuck-`'processing'` sweep) has no
   automatic or manual retry path yet.
-- **Phone-camera scanning** (cross-device QR handoff) — deliberately split
-  from upload as its own feature per explicit product direction, not
-  started.
+- **Multi-page / batch scan capture** — feature 009's phone-camera scan
+  handoff produces exactly one document per QR code; scanning a multi-page
+  document means repeating the flow per page.
 - **Multi-user tenants** (invite flow, membership roles) — schema/types
   already distinguish `TenantId`/`UserId` in anticipation, but no UI or
   membership table exists.

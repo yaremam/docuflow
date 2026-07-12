@@ -237,6 +237,41 @@ impl ResetToken {
     }
 }
 
+/// Opaque phone-camera-scan handoff token: minted at `GET /scan` (desktop,
+/// authenticated) and embedded in the QR-encoded URL the phone loads. Same
+/// shape and rationale as `ResetToken` just above (256-bit CSPRNG value, only
+/// its SHA-256 hash persisted) — kept as a separate type rather than reusing
+/// `ResetToken` since it's a `Path` segment (`/scan/:token`), not a `Query`
+/// field, even though the generate/hash logic is identical.
+#[derive(Clone, serde::Deserialize)]
+pub struct ScanToken(String);
+
+impl std::fmt::Debug for ScanToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ScanToken(<redacted>)")
+    }
+}
+
+impl ScanToken {
+    pub fn generate() -> Self {
+        let a = uuid::Uuid::new_v4().as_simple().to_string();
+        let b = uuid::Uuid::new_v4().as_simple().to_string();
+        Self(format!("{a}{b}"))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn hash(&self) -> String {
+        use sha2::Digest;
+        sha2::Sha256::digest(self.0.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+}
+
 const TAGS_MAX_COUNT: usize = 20;
 const TAG_MAX_LEN: usize = 50;
 

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block title %}Scan a document — DocuFlow{% endblock %}
+
+{% block content %}
+<div class="documents-page">
+  <div class="form-page">
+    {% if captured %}
+    <div class="card phone-center-card" data-tab="DocuFlow scan">
+      <div class="phone-status-icon success">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6"></path></svg>
+      </div>
+      <h2>Scan received</h2>
+      <p class="card-sub">It's on its way into your DocuFlow account &mdash; check your desktop, or close this tab.</p>
+    </div>
+    {% else if valid %}
+    <div class="card" data-tab="DocuFlow scan">
+      <h2>Take a photo of your document</h2>
+      <p class="card-sub">This will be added to your DocuFlow account. No login needed on this device.</p>
+      <form method="post" action="/scan/{{ token }}" enctype="multipart/form-data">
+        <div class="field">
+          <label for="photo">Photo</label>
+          <input id="photo" name="photo" type="file" accept="image/*" capture="environment" required>
+          <span class="field-hint">Lay the document flat, good light, one page.</span>
+        </div>
+        <button class="btn btn-stamp" type="submit">Upload photo</button>
+      </form>
+    </div>
+    {% else %}
+    <div class="card phone-center-card" data-tab="DocuFlow scan">
+      <div class="phone-status-icon error">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5"></path><path d="M12 16h.01"></path></svg>
+      </div>
+      <h2>This code isn't valid anymore</h2>
+      <p class="card-sub">Scan codes are one-time and expire after 10 minutes. Go back to your desktop and start a new scan.</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

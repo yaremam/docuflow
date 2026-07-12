@@ -670,6 +670,64 @@ a { color: inherit; }
   .detail-grid .detail-meta { flex: 1; }
 }
 
+/* ---- phone-camera scan handoff (feature 009) ---- */
+.qr-wrap { display: flex; justify-content: center; padding: 1.2rem 0 0.6rem; }
+.qr-frame { display: inline-flex; background: var(--paper-raised); border: 1px solid var(--line); border-radius: 6px; padding: 0.9rem; }
+.qr-frame svg { display: block; width: 200px; height: 200px; max-width: 100%; }
+.qr-caption {
+  text-align: center;
+  font-family: 'Fira Mono', monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+  color: var(--slate);
+  margin: 0.9rem 0 0;
+  word-break: break-all;
+}
+.qr-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: 1.1rem 0 0;
+  font-family: 'Fira Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--slate);
+}
+.pulse-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--stamp); animation: qr-pulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .pulse-dot { animation: none; }
+}
+@keyframes qr-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+.expiry-note { text-align: center; font-size: 0.72rem; color: var(--slate); margin: 1rem 0 0; }
+
+.phone-center-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 320px;
+  padding: 2rem 1.5rem;
+  text-align: center;
+}
+.phone-center-card h2 { text-align: center; }
+.phone-status-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 1rem;
+}
+.phone-status-icon.success { background: color-mix(in srgb, var(--stamp) 16%, transparent); color: var(--stamp); }
+.phone-status-icon.error { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.phone-status-icon svg { width: 28px; height: 28px; }
+
 .site-footer {
   padding: 1.4rem 1.25rem;
   font-size: 0.76rem;

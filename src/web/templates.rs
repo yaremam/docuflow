@@ -120,3 +120,39 @@ pub struct DocumentNewTemplate {
     pub authenticated: bool,
     pub nav_avatar_url: Option<String>,
 }
+
+/// The desktop side of feature 009's phone-camera scan handoff: a QR code
+/// and a "waiting for your phone" state, polled via the same
+/// `<meta http-equiv="refresh">` idiom `document_show.html` already uses for
+/// OCR-status polling (see `docs/tdr/009_phone_camera_scan_design.md`
+/// Alternative F).
+#[derive(askama::Template, askama_web::WebTemplate)]
+#[template(path = "scan_new.html")]
+pub struct ScanNewTemplate {
+    pub active_tab: &'static str,
+    pub authenticated: bool,
+    pub nav_avatar_url: Option<String>,
+    pub scan_url: String,
+    /// Raw `<svg>...</svg>` markup (no XML prolog), rendered with
+    /// `|safe` — colored via `var(--ink)`/`var(--paper-raised)` so it
+    /// follows the page's active light/dark theme like everything else.
+    pub qr_svg: String,
+}
+
+/// The phone side of the scan handoff — public, unauthenticated (the phone
+/// never logs in; the token itself is the credential). Three states in one
+/// template, mirroring `ResetPasswordTemplate`'s `valid` bool convention:
+/// `captured` (just uploaded, confirmation), `valid` (still-pending token,
+/// show the capture form), or neither (unknown/expired/already-used token).
+#[derive(askama::Template, askama_web::WebTemplate)]
+#[template(path = "scan_phone.html")]
+pub struct ScanPhoneTemplate {
+    /// Always `false` — the phone is never logged in — but `base.html`'s
+    /// nav block still needs it, like every other template extending it.
+    pub authenticated: bool,
+    pub active_tab: &'static str,
+    pub nav_avatar_url: Option<String>,
+    pub valid: bool,
+    pub captured: bool,
+    pub token: String,
+}

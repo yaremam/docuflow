@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update scan_sessions set status = 'captured', document_id = $2\n         where id = $1 and status = 'pending'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6595646a281b4bfe6e84d1c5f049be609836dfa53be8464bc0093840d0aae054"
+}

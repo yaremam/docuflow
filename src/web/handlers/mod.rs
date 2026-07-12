@@ -4,3 +4,4 @@ pub mod health;
 pub mod landing;
 pub mod password_reset;
 pub mod profile;
+pub mod scan;
