@@ -191,6 +191,36 @@ pub struct ProfileForm {
     pub phone: ProfileField,
 }
 
+/// Two concatenated v4 UUIDs, hex-encoded — 256 bits of CSPRNG entropy,
+/// inherently URL-safe. Reuses the `uuid` crate's own OS-RNG-backed
+/// generator rather than adding a `rand`/`base64` dependency. Shared by
+/// `ResetToken` and `ScanToken` below — both are "opaque one-time secret,
+/// only its hash ever persisted" tokens with identical generation and
+/// hashing needs, just embedded in different places (an emailed link vs. a
+/// QR-encoded URL) and read back via different extractors (`Query` vs.
+/// `Path`), which is a difference in how each type is *used*, not in how
+/// the token itself is generated or hashed.
+fn generate_hex_token() -> String {
+    let a = uuid::Uuid::new_v4().as_simple().to_string();
+    let b = uuid::Uuid::new_v4().as_simple().to_string();
+    format!("{a}{b}")
+}
+
+/// Hex-encoded SHA-256 of `token`, for storage/lookup. A fast hash is the
+/// right choice here — unlike `Password` (a low-entropy, guessable human
+/// secret that Argon2's deliberate slowness defends against), a generated
+/// token already has 256 bits of entropy with nothing to brute-force; the
+/// only real threat is a database leak handing out live tokens, which a
+/// fast one-way hash defeats just as well as a slow one, without taxing
+/// every legitimate reset-link click or scan poll.
+fn hash_hex_token(token: &str) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(token.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 /// Opaque password-reset token, generated at `/forgot-password` time and
 /// carried in the emailed reset link. Unlike `Password`/`EmailAddress`
 /// there's no grammar to enforce on the way back in — any string that
@@ -207,42 +237,25 @@ impl std::fmt::Debug for ResetToken {
 }
 
 impl ResetToken {
-    /// Two concatenated v4 UUIDs, hex-encoded — 256 bits of CSPRNG entropy,
-    /// inherently URL-safe. Reuses the `uuid` crate's own OS-RNG-backed
-    /// generator rather than adding a `rand`/`base64` dependency for this
-    /// one call site.
     pub fn generate() -> Self {
-        let a = uuid::Uuid::new_v4().as_simple().to_string();
-        let b = uuid::Uuid::new_v4().as_simple().to_string();
-        Self(format!("{a}{b}"))
+        Self(generate_hex_token())
     }
 
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
-    /// Hex-encoded SHA-256 of the token, for storage/lookup. A fast hash is
-    /// the right choice here — unlike `Password` (a low-entropy, guessable
-    /// human secret that Argon2's deliberate slowness defends against), a
-    /// generated token already has 256 bits of entropy with nothing to
-    /// brute-force; the only real threat is a database leak handing out
-    /// live tokens, which a fast one-way hash defeats just as well as a
-    /// slow one, without taxing every legitimate reset-link click.
     pub fn hash(&self) -> String {
-        use sha2::Digest;
-        sha2::Sha256::digest(self.0.as_bytes())
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()
+        hash_hex_token(&self.0)
     }
 }
 
 /// Opaque phone-camera-scan handoff token: minted at `GET /scan` (desktop,
 /// authenticated) and embedded in the QR-encoded URL the phone loads. Same
 /// shape and rationale as `ResetToken` just above (256-bit CSPRNG value, only
-/// its SHA-256 hash persisted) — kept as a separate type rather than reusing
-/// `ResetToken` since it's a `Path` segment (`/scan/:token`), not a `Query`
-/// field, even though the generate/hash logic is identical.
+/// its SHA-256 hash persisted) — kept as a distinct type since it's read
+/// back via `Path` (`/scan/:token`) rather than `Query`, but shares the
+/// actual generate/hash logic via `generate_hex_token`/`hash_hex_token`.
 #[derive(Clone, serde::Deserialize)]
 pub struct ScanToken(String);
 
@@ -252,11 +265,21 @@ impl std::fmt::Debug for ScanToken {
     }
 }
 
+/// Wraps an already-known raw token string so callers (namely tests seeding
+/// a `scan_sessions` row directly) can compute its `.hash()` without
+/// hand-rolling the same SHA-256-hex logic a second time. Doesn't weaken
+/// anything `ScanToken` already guarantees — it's `Deserialize` directly
+/// from an arbitrary path segment, so it never promised its contents were
+/// only ever a `generate()`-produced value.
+impl From<String> for ScanToken {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
 impl ScanToken {
     pub fn generate() -> Self {
-        let a = uuid::Uuid::new_v4().as_simple().to_string();
-        let b = uuid::Uuid::new_v4().as_simple().to_string();
-        Self(format!("{a}{b}"))
+        Self(generate_hex_token())
     }
 
     pub fn as_str(&self) -> &str {
@@ -264,11 +287,7 @@ impl ScanToken {
     }
 
     pub fn hash(&self) -> String {
-        use sha2::Digest;
-        sha2::Sha256::digest(self.0.as_bytes())
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()
+        hash_hex_token(&self.0)
     }
 }
 

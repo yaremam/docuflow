@@ -139,11 +139,21 @@ pub struct ScanNewTemplate {
     pub qr_svg: String,
 }
 
+/// The three mutually-exclusive states `scan_phone.html` can render. A
+/// `bool` pair (`valid`/`captured`) would allow four combinations when only
+/// three are ever meaningful — this makes the illegal one unrepresentable
+/// instead of just unexercised.
+pub enum ScanPhoneState {
+    /// Just uploaded — confirmation screen.
+    Captured,
+    /// Still-pending, unexpired token — show the capture form.
+    Capture,
+    /// Unknown, expired, or already-used token.
+    Invalid,
+}
+
 /// The phone side of the scan handoff — public, unauthenticated (the phone
-/// never logs in; the token itself is the credential). Three states in one
-/// template, mirroring `ResetPasswordTemplate`'s `valid` bool convention:
-/// `captured` (just uploaded, confirmation), `valid` (still-pending token,
-/// show the capture form), or neither (unknown/expired/already-used token).
+/// never logs in; the token itself is the credential).
 #[derive(askama::Template, askama_web::WebTemplate)]
 #[template(path = "scan_phone.html")]
 pub struct ScanPhoneTemplate {
@@ -152,7 +162,6 @@ pub struct ScanPhoneTemplate {
     pub authenticated: bool,
     pub active_tab: &'static str,
     pub nav_avatar_url: Option<String>,
-    pub valid: bool,
-    pub captured: bool,
+    pub state: ScanPhoneState,
     pub token: String,
 }

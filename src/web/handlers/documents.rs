@@ -315,7 +315,9 @@ pub async fn new_form(
     })
 }
 
-fn bad_request(message: &'static str) -> Response {
+/// Also used by `web::handlers::scan` (feature 009's phone-camera capture),
+/// which shares this pipeline's 400-on-invalid-upload shape.
+pub(crate) fn bad_request(message: &'static str) -> Response {
     (StatusCode::BAD_REQUEST, message).into_response()
 }
 
@@ -324,9 +326,12 @@ fn bad_request(message: &'static str) -> Response {
 /// through the `Form` extractor's automatic serde validation (multipart
 /// bodies mix text fields with a file field), so each has to call
 /// `TryFrom<String>` by hand; this just avoids repeating the "match, keep
-/// value or bail with 400" shape three times.
-fn parse_metadata_field<T: TryFrom<String>>(text: String, error_message: &'static str) -> Result<T, Response> {
-    T::try_from(text).map_err(|_| bad_request(error_message))
+/// value or bail with 400" shape three times. Returns the plain error
+/// message rather than a built `Response` — `clippy::result_large_err`
+/// flags `Response` (128+ bytes) as an oversized `Err` variant, and callers
+/// already have `bad_request` in scope to build the response themselves.
+fn parse_metadata_field<T: TryFrom<String>>(text: String, error_message: &'static str) -> Result<T, &'static str> {
+    T::try_from(text).map_err(|_| error_message)
 }
 
 /// Runs the OCR pass for a just-uploaded, OCR-eligible document as detached
@@ -395,8 +400,12 @@ async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: 
 /// encountered (multipart bodies can't be rewound to check what follows
 /// first), so only the upload is unavoidable in that rejected case, never
 /// the DB row; the S3 object it leaves behind is an accepted, harmless
-/// orphan (nothing ever references it).
-async fn stream_document_to_blob(
+/// orphan (nothing ever references it). Also called directly by
+/// `web::handlers::scan::submit_scan` (feature 009's phone-camera capture),
+/// which has no metadata fields that could invalidate an already-streamed
+/// file, so it has no need for a combined convenience wrapper — it just
+/// calls this and `insert_document_and_queue_ocr` back to back itself.
+pub(crate) async fn stream_document_to_blob(
     state: &AppState,
     user_id: Uuid,
     document_id: Uuid,
@@ -412,18 +421,15 @@ async fn stream_document_to_blob(
 }
 
 /// Inserts the document row for an already-blob-stored upload and queues its
-/// OCR pass — shared by `create` below (called only once its whole
-/// multipart body has validated, via `stream_document_to_blob` +
-/// `store_and_queue_ocr`'s two-phase split) and
-/// `web::handlers::scan::submit_scan` (phone camera capture, feature 009,
-/// via `store_and_queue_ocr` directly — the phone flow has no metadata
-/// fields that could invalidate an already-streamed file, so it doesn't need
-/// the split). OCR-eligibility is always decided from the shared
-/// `OCR_ELIGIBLE_CONTENT_TYPES` list, even though feature 008's desktop
-/// upload and feature 009's phone capture validate `content_type` against
-/// their own, differently-scoped accepted sets before ever reaching here.
+/// OCR pass — shared by `create` below and `web::handlers::scan::submit_scan`
+/// (phone camera capture, feature 009), both calling this right after
+/// `stream_document_to_blob` above. OCR-eligibility is always decided from
+/// the shared `OCR_ELIGIBLE_CONTENT_TYPES` list, even though feature 008's
+/// desktop upload and feature 009's phone capture validate `content_type`
+/// against their own, differently-scoped accepted sets before ever reaching
+/// here.
 #[allow(clippy::too_many_arguments)]
-async fn insert_document_and_queue_ocr(
+pub(crate) async fn insert_document_and_queue_ocr(
     state: &AppState,
     tenant_id: Uuid,
     user_id: Uuid,
@@ -467,42 +473,6 @@ async fn insert_document_and_queue_ocr(
     Ok(())
 }
 
-/// Convenience one-shot combining both phases above — the shape
-/// `web::handlers::scan::submit_scan` calls directly, since the phone-scan
-/// flow has exactly one field (the photo) and no ordering hazard to guard
-/// against.
-#[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(state, field, original_filename, title, tags))]
-pub(crate) async fn store_and_queue_ocr(
-    state: &AppState,
-    tenant_id: Uuid,
-    user_id: Uuid,
-    document_id: Uuid,
-    original_filename: String,
-    content_type: String,
-    field: axum::extract::multipart::Field<'_>,
-    title: Option<String>,
-    tags: Vec<String>,
-    date_issued: Option<time::Date>,
-) -> Result<(), AppWebError> {
-    let (blob_key, file_size_bytes) =
-        stream_document_to_blob(state, user_id, document_id, &content_type, field).await?;
-    insert_document_and_queue_ocr(
-        state,
-        tenant_id,
-        user_id,
-        document_id,
-        blob_key,
-        original_filename,
-        content_type,
-        file_size_bytes,
-        title,
-        tags,
-        date_issued,
-    )
-    .await
-}
-
 #[tracing::instrument(skip(state, tenancy, multipart))]
 pub async fn create(
     tenancy: TenantContext,
@@ -536,16 +506,16 @@ pub async fn create(
         match name.as_str() {
             "title" => match parse_metadata_field(field.text().await?, "title is too long") {
                 Ok(value) => title = value,
-                Err(response) => return Ok(response),
+                Err(message) => return Ok(bad_request(message)),
             },
             "tags" => match parse_metadata_field(field.text().await?, "invalid tags") {
                 Ok(value) => tags = value,
-                Err(response) => return Ok(response),
+                Err(message) => return Ok(bad_request(message)),
             },
             "date_issued" => {
                 match parse_metadata_field(field.text().await?, "date issued must be blank or YYYY-MM-DD") {
                     Ok(value) => date_issued = value,
-                    Err(response) => return Ok(response),
+                    Err(message) => return Ok(bad_request(message)),
                 }
             }
             "file" => {

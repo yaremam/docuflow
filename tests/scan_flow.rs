@@ -45,13 +45,7 @@ struct ScanSessionRow {
 }
 
 async fn find_scan_session_by_token(app: &common::TestApp, token: &str) -> Option<ScanSessionRow> {
-    let hash = {
-        use sha2::Digest;
-        sha2::Sha256::digest(token.as_bytes())
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    };
+    let hash = ScanToken::from(token.to_string()).hash();
     sqlx::query_as!(
         ScanSessionRow,
         "select status, document_id from scan_sessions where token_hash = $1",

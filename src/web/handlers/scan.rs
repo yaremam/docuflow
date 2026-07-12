@@ -4,18 +4,17 @@
 //! `docs/tdr/009_phone_camera_scan_design.md` for the full design rationale.
 
 use axum::extract::{Multipart, Path, Query, State};
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::web::error::AppWebError;
 use crate::web::forms::ScanToken;
-use crate::web::handlers::documents::store_and_queue_ocr;
+use crate::web::handlers::documents::{bad_request, insert_document_and_queue_ocr, stream_document_to_blob};
 use crate::web::nav;
 use crate::web::state::AppState;
 use crate::web::tenancy::TenantContext;
-use crate::web::templates::{ScanNewTemplate, ScanPhoneTemplate};
+use crate::web::templates::{ScanNewTemplate, ScanPhoneState, ScanPhoneTemplate};
 
 const SCAN_SESSION_TTL_MINUTES: i64 = 10;
 
@@ -24,10 +23,6 @@ const SCAN_SESSION_TTL_MINUTES: i64 = 10;
 /// 008's desktop upload also accepts TIFF/WEBP/PDF, none of which apply
 /// here).
 const PHONE_ACCEPTED_CONTENT_TYPES: &[&str] = &["image/jpeg", "image/png"];
-
-fn bad_request(message: &'static str) -> Response {
-    (StatusCode::BAD_REQUEST, message).into_response()
-}
 
 /// Renders `url` as inline SVG markup (no XML prolog — this is embedded
 /// directly inside an HTML document, not served as a standalone `.svg`
@@ -132,15 +127,17 @@ pub async fn show_scan_phone(
     .fetch_optional(&state.pool)
     .await?;
 
-    let valid = matches!(&row, Some(row) if row.status == "pending");
-    let captured = matches!(&row, Some(row) if row.status == "captured");
+    let phone_state = match row {
+        Some(row) if row.status == "captured" => ScanPhoneState::Captured,
+        Some(row) if row.status == "pending" => ScanPhoneState::Capture,
+        _ => ScanPhoneState::Invalid,
+    };
 
     Ok(ScanPhoneTemplate {
         authenticated: false,
         active_tab: "",
         nav_avatar_url: None,
-        valid,
-        captured,
+        state: phone_state,
         token: token.as_str().to_string(),
     })
 }
@@ -182,14 +179,17 @@ pub async fn submit_scan(
         }
 
         let document_id = Uuid::new_v4();
-        store_and_queue_ocr(
+        let (blob_key, file_size_bytes) =
+            stream_document_to_blob(&state, row.user_id, document_id, &content_type, field).await?;
+        insert_document_and_queue_ocr(
             &state,
             row.tenant_id,
             row.user_id,
             document_id,
+            blob_key,
             original_filename,
             content_type,
-            field,
+            file_size_bytes,
             None,
             Vec::new(),
             None,
@@ -223,8 +223,7 @@ pub async fn submit_scan(
         authenticated: false,
         active_tab: "",
         nav_avatar_url: None,
-        valid: false,
-        captured: true,
+        state: ScanPhoneState::Captured,
         token: token.as_str().to_string(),
     }
     .into_response())
