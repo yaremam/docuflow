@@ -39,6 +39,10 @@ pub fn app(state: AppState, session_layer: SessionManagerLayer<PostgresStore>) -
             "/documents/:id",
             get(handlers::documents::show).post(handlers::documents::update),
         )
+        .route(
+            "/documents/:id/delete",
+            get(handlers::documents::confirm_delete).post(handlers::documents::delete),
+        )
         .route("/scan", get(handlers::scan::new_scan))
         .route(
             "/profile",

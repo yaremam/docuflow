@@ -92,6 +92,7 @@ pub struct DocumentsListTemplate {
     pub nav_avatar_url: Option<String>,
     pub q: String,
     pub sort: &'static str,
+    pub deleted: bool,
     pub documents: Vec<DocumentListItem>,
 }
 
@@ -115,6 +116,17 @@ pub struct DocumentShowTemplate {
     pub uploaded_at: String,
     pub ocr_status: String,
     pub ocr_text: Option<String>,
+}
+
+#[derive(askama::Template, askama_web::WebTemplate)]
+#[template(path = "document_delete.html")]
+pub struct DocumentDeleteTemplate {
+    pub active_tab: &'static str,
+    pub authenticated: bool,
+    pub nav_avatar_url: Option<String>,
+    pub id: uuid::Uuid,
+    pub title: String,
+    pub original_filename: String,
 }
 
 #[derive(askama::Template, askama_web::WebTemplate)]

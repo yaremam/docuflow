@@ -1,0 +1,8 @@
+- add OCR to PDF files
+- redo the OCR
+- extract and suggest issued date from image EXIF
+- extract and suggest issued date from the document OCR (After it is finished)
+- proper OCR for cyryllic documents
+- add document language compulsory field to metadata and try to recognize automatically
+- add smart filters panel to the /documents page similar to gmail or adobe lightroom smart collections (hierarchy by date issued, by tags, by language)
+- implement proper password reset

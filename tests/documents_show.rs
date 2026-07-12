@@ -93,6 +93,24 @@ async fn view_renders_a_pdf_embed_with_a_presigned_url() {
 }
 
 #[tokio::test]
+async fn view_includes_a_delete_link() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "showdelete.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "showdelete.docs@example.com").await;
+    let doc_id = seed_document(&app.state.pool, user, "contract.pdf", Some("text")).await;
+
+    let response = common::get_with_cookie(&app, &format!("/documents/{doc_id}"), &cookie).await;
+
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = common::body_string(response).await;
+    assert!(
+        body.contains(&format!("href=\"/documents/{doc_id}/delete\"")),
+        "expected a delete link on the detail page, got: {body}"
+    );
+}
+
+#[tokio::test]
 async fn view_shows_a_placeholder_when_text_is_not_yet_extracted() {
     let app = common::test_state().await;
     let login = common::signup_and_login(&app, "pending.docs@example.com", "documentspassword").await;

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}Delete {{ title }} — DocuFlow{% endblock %}
+
+{% block content %}
+<div class="form-page">
+  <div class="card card-danger" data-tab="Confirm delete">
+    <h2>Delete this document?</h2>
+    <p class="confirm-warning">This can't be undone. The file and its extracted text are permanently removed from your workspace.</p>
+    <div class="confirm-doc-summary">
+      <div class="doc-title">{{ title }}</div>
+      <div class="doc-filename">{{ original_filename }}</div>
+    </div>
+    <form method="post" action="/documents/{{ id }}/delete" class="confirm-actions">
+      <button class="btn btn-danger" type="submit">Delete permanently</button>
+      <a class="btn btn-outline" href="/documents/{{ id }}">Cancel</a>
+    </form>
+  </div>
+</div>
+{% endblock %}

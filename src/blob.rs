@@ -272,6 +272,21 @@ impl BlobStore {
         Ok(bytes.to_vec())
     }
 
+    /// Deletes an object outright. Used when a document row is deleted — the
+    /// DB row is removed first (tenant-scoped, so ownership is checked
+    /// there), and this is only called once that's already confirmed to
+    /// exist, so there's no separate existence check here.
+    pub async fn delete_object(&self, key: &str) -> Result<(), BlobError> {
+        self.client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+            .map_err(s3_err)?;
+        Ok(())
+    }
+
     /// Short-lived presigned GET URL, for rendering the picture in an
     /// `<img>` without making the bucket itself public.
     pub async fn presigned_get_url(&self, key: &str) -> Result<String, BlobError> {

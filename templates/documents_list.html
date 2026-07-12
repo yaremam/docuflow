@@ -26,6 +26,10 @@
     </div>
   </form>
 
+  {% if deleted %}
+  <p class="form-success">Deleted.</p>
+  {% endif %}
+
   {% if documents.is_empty() %}
   <div class="empty-state">
     <h3>No documents yet</h3>
@@ -36,42 +40,47 @@
   {% else %}
   <div class="doc-list">
     {% for doc in documents %}
-    <a class="doc-row" href="/documents/{{ doc.id }}">
-      {% if doc.is_image %}
-      <div class="doc-thumb"><img src="{{ doc.file_url }}" alt=""></div>
-      {% else %}
-      <div class="doc-thumb doc-thumb-pdf">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 2h9l5 5v15H6z"></path><path d="M15 2v5h5"></path></svg>
-        <span>PDF</span>
-      </div>
-      {% endif %}
-      <div class="doc-row-body">
-        <div class="doc-row-top">
-          <span class="doc-row-title">{{ doc.title }}</span>
-          {% if doc.ocr_status == "done" %}
-          <span class="status">Text ready</span>
-          {% else if doc.ocr_status == "failed" %}
-          <span class="status pending">Processing failed</span>
-          {% else if doc.ocr_status == "skipped" %}
-          <span class="status pending">No text</span>
-          {% else %}
-          <span class="status pending">Processing&hellip;</span>
-          {% endif %}
+    <div class="doc-row">
+      <a class="doc-row-main" href="/documents/{{ doc.id }}">
+        {% if doc.is_image %}
+        <div class="doc-thumb"><img src="{{ doc.file_url }}" alt=""></div>
+        {% else %}
+        <div class="doc-thumb doc-thumb-pdf">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 2h9l5 5v15H6z"></path><path d="M15 2v5h5"></path></svg>
+          <span>PDF</span>
         </div>
-        <div class="doc-row-filename">{{ doc.original_filename }}</div>
-        <div class="doc-row-meta">
-          {% for tag in doc.tags %}
-          <span class="tag-chip">{{ tag }}</span>
-          {% endfor %}
-          <span class="doc-row-dates">
-            {% if let Some(date_issued) = doc.date_issued %}
-            Issued {{ date_issued }} &middot;
+        {% endif %}
+        <div class="doc-row-body">
+          <div class="doc-row-top">
+            <span class="doc-row-title">{{ doc.title }}</span>
+            {% if doc.ocr_status == "done" %}
+            <span class="status">Text ready</span>
+            {% else if doc.ocr_status == "failed" %}
+            <span class="status pending">Processing failed</span>
+            {% else if doc.ocr_status == "skipped" %}
+            <span class="status pending">No text</span>
+            {% else %}
+            <span class="status pending">Processing&hellip;</span>
             {% endif %}
-            Uploaded {{ doc.uploaded_at }}
-          </span>
+          </div>
+          <div class="doc-row-filename">{{ doc.original_filename }}</div>
+          <div class="doc-row-meta">
+            {% for tag in doc.tags %}
+            <span class="tag-chip">{{ tag }}</span>
+            {% endfor %}
+            <span class="doc-row-dates">
+              {% if let Some(date_issued) = doc.date_issued %}
+              Issued {{ date_issued }} &middot;
+              {% endif %}
+              Uploaded {{ doc.uploaded_at }}
+            </span>
+          </div>
         </div>
-      </div>
-    </a>
+      </a>
+      <a class="doc-row-delete" href="/documents/{{ doc.id }}/delete" aria-label="Delete {{ doc.title }}" title="Delete document">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="M6 7l1 13h10l1-13"></path></svg>
+      </a>
+    </div>
     {% endfor %}
   </div>
   {% endif %}

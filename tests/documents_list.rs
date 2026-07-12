@@ -150,6 +150,25 @@ async fn sort_by_date_issued_orders_documents_correctly() {
 }
 
 #[tokio::test]
+async fn list_rows_include_a_delete_link() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "rowdelete.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "rowdelete.docs@example.com").await;
+
+    let doc_id = seed_document(&app.state.pool, user, "bill.pdf", &["utilities"], None, datetime(2026, 1, 1)).await;
+
+    let response = common::get_with_cookie(&app, "/documents", &cookie).await;
+
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = common::body_string(response).await;
+    assert!(
+        body.contains(&format!("href=\"/documents/{doc_id}/delete\"")),
+        "expected a delete link for the document row, got: {body}"
+    );
+}
+
+#[tokio::test]
 async fn list_rows_show_an_image_thumbnail_and_a_pdf_badge() {
     let app = common::test_state().await;
     let login = common::signup_and_login(&app, "thumbs.docs@example.com", "documentspassword").await;

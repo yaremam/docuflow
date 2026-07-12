@@ -10,7 +10,9 @@ use crate::web::forms::{DateIssuedField, ProfileField, Tags};
 use crate::web::nav;
 use crate::web::state::AppState;
 use crate::web::tenancy::TenantContext;
-use crate::web::templates::{DocumentListItem, DocumentNewTemplate, DocumentShowTemplate, DocumentsListTemplate};
+use crate::web::templates::{
+    DocumentDeleteTemplate, DocumentListItem, DocumentNewTemplate, DocumentShowTemplate, DocumentsListTemplate,
+};
 
 /// Also used by the router to size its `DefaultBodyLimit` layer — kept as
 /// one constant so the two enforcement points (that layer, and the
@@ -116,6 +118,8 @@ pub struct ListQuery {
     #[serde(default)]
     q: String,
     sort: Option<String>,
+    #[serde(default)]
+    deleted: bool,
 }
 
 #[tracing::instrument(skip(state, tenancy))]
@@ -223,6 +227,7 @@ pub async fn list(
         nav_avatar_url,
         q: query.q,
         sort: sort.as_str(),
+        deleted: query.deleted,
         documents,
     })
 }
@@ -327,6 +332,70 @@ pub async fn update(
     }
 
     Ok(Redirect::to(&format!("/documents/{id}?saved=true")).into_response())
+}
+
+struct DocumentSummaryRow {
+    title: Option<String>,
+    original_filename: String,
+}
+
+#[tracing::instrument(skip(state, tenancy))]
+pub async fn confirm_delete(
+    tenancy: TenantContext,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<DocumentDeleteTemplate, AppWebError> {
+    let nav_avatar_url = nav::avatar_url(&state.pool, &state.blob, tenancy.user_id.0).await?;
+
+    let row = sqlx::query_as!(
+        DocumentSummaryRow,
+        "select title, original_filename from documents where id = $1 and tenant_id = $2",
+        id,
+        tenancy.tenant_id.0,
+    )
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(AppWebError::NotFound)?;
+
+    Ok(DocumentDeleteTemplate {
+        active_tab: "documents",
+        authenticated: true,
+        nav_avatar_url,
+        id,
+        title: row.title.unwrap_or_else(|| row.original_filename.clone()),
+        original_filename: row.original_filename,
+    })
+}
+
+/// Deletes the DB row first (tenant-scoped `DELETE ... RETURNING` both
+/// checks ownership and hands back the `blob_key` in one query), then the
+/// blob — so a blob-delete failure never leaves a row pointing at storage
+/// that's already gone, only the reverse (an orphaned blob with no row,
+/// which is invisible to the user and harmless beyond wasted storage). The
+/// blob delete's own failure is logged, not bubbled via `?`: by the time it
+/// runs, the DB delete has already committed, so from the user's side the
+/// document is already gone — surfacing a 500 here would report failure for
+/// an action that, as far as they can tell, already succeeded.
+#[tracing::instrument(skip(state, tenancy))]
+pub async fn delete(
+    tenancy: TenantContext,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, AppWebError> {
+    let row = sqlx::query!(
+        "delete from documents where id = $1 and tenant_id = $2 returning blob_key",
+        id,
+        tenancy.tenant_id.0,
+    )
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(AppWebError::NotFound)?;
+
+    if let Err(error) = state.blob.delete_object(&row.blob_key).await {
+        tracing::warn!(%error, "failed to delete blob for an already-deleted document row");
+    }
+
+    Ok(Redirect::to("/documents?deleted=true").into_response())
 }
 
 #[tracing::instrument(skip(state, tenancy))]
