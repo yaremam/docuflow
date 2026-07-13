@@ -1,5 +1,4 @@
-- proper language selection from all world languages not just English and Cyrrylic (not even a language)
-- properly support Ukrainian and Serbian: dedicated OCR trained-data packs (extends feature 011's eng+rus pattern) plus distinct language-field values, instead of the generic English/Cyrillic-script bucketing feature 014 ships with (raised 2026-07-13, deliberately deferred out of 014)
+- Serbian OCR + a distinct language-field value — explicitly skipped from feature 020's German/Dutch/Ukrainian pack expansion (2026-07-13); the language field itself already accepts "sr" (full ISO 639-1 picker), it just has no dedicated OCR trained-data pack yet
 - implement proper password reset
 - improve OCR quality - results are shit
 - batch feature 018's per-facet-option count queries into fewer round trips if page-load latency ever becomes a real complaint (deliberately deferred out of 018, see TDR 018 §2 Alternative B)

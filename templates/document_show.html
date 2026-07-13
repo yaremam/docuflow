@@ -93,11 +93,19 @@
             <label for="language">Language</label>
             <select id="language" name="language">
               <option value=""{% if language == "" %} selected{% endif %}>Not set</option>
-              <option value="en"{% if language == "en" %} selected{% endif %}>English</option>
-              <option value="cyr"{% if language == "cyr" %} selected{% endif %}>Cyrillic</option>
+              <optgroup label="OCR-supported">
+                {% for opt in supported_language_options %}
+                <option value="{{ opt.code }}"{% if language == opt.code %} selected{% endif %}>{{ opt.name }}</option>
+                {% endfor %}
+              </optgroup>
+              <optgroup label="All languages">
+                {% for opt in other_language_options %}
+                <option value="{{ opt.code }}"{% if language == opt.code %} selected{% endif %}>{{ opt.name }}</option>
+                {% endfor %}
+              </optgroup>
             </select>
             {% if language.is_empty() %}
-            <p class="field-hint">Not detected yet &mdash; pick one, or leave blank.</p>
+            <p class="field-hint">Detected automatically for English, German, Dutch, and Ukrainian &mdash; pick any other language manually, or leave blank.</p>
             {% endif %}
           </div>
           <button class="btn btn-stamp" type="submit">Save changes</button>

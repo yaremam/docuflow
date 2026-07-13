@@ -110,12 +110,14 @@ pub struct YearFacetOption {
     pub months: Vec<MonthFacetOption>,
 }
 
-/// One checkbox in the Language facet group — `value` matches feature
-/// 014's `documents.language` values (`en`/`cyr`) plus the `unset`
-/// sentinel meaning `language is null`, never a new vocabulary.
+/// One checkbox in the Language facet group. `value` is either a real ISO
+/// 639-1 code actually present among the tenant's documents, or the
+/// `unset` sentinel meaning `language is null` — since feature 020 opened
+/// `language` up to any ISO 639-1 code, this list is discovered per-tenant
+/// (see `list`'s facet-discovery query) rather than a fixed 3-option set.
 pub struct LanguageFacetOption {
-    pub value: &'static str,
-    pub label: &'static str,
+    pub value: String,
+    pub label: String,
     pub count: i64,
     pub checked: bool,
 }
@@ -199,10 +201,17 @@ pub struct DocumentShowTemplate {
     pub uploaded_at: String,
     pub ocr_status: String,
     pub ocr_text: Option<String>,
-    /// `""`/`"en"`/`"cyr"` — matches the `<select>`'s option values
-    /// directly (see TDR 014), so the template can compare with `==`
-    /// rather than needing an `Option` + extra branch.
+    /// `""` or a real ISO 639-1 code — matches the `<select>`'s option
+    /// values directly (see TDR 014, generalized by TDR 020), so the
+    /// template can compare with `==` rather than needing an `Option` +
+    /// extra branch.
     pub language: String,
+    /// The dropdown's first `<optgroup>` — the 4 languages OCR is actually
+    /// tuned for (`crate::languages::OCR_SUPPORTED`).
+    pub supported_language_options: Vec<crate::languages::LanguageOption>,
+    /// The dropdown's second `<optgroup>` — every other ISO 639-1 language,
+    /// alphabetical, manual-tagging only (see TDR 020).
+    pub other_language_options: Vec<crate::languages::LanguageOption>,
 }
 
 #[derive(askama::Template, askama_web::WebTemplate)]

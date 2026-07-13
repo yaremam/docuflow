@@ -1,29 +1,66 @@
-//! Detects a document's language from its OCR-extracted text (see TDR 014),
-//! scoped to exactly the two buckets `tesseract -l eng+rus` (TDR 011)
-//! actually produces: English, and Cyrillic script generally (not a
-//! specific language within it — the shared `rus` trained-data pack OCRs
-//! any Cyrillic-script document through the same model, so detection here
-//! matches that at the script level rather than pretending to distinguish
-//! specific languages the OCR pipeline itself doesn't).
+//! Post-OCR language auto-detection (feature 011, generalized in feature 020) — runs
+//! `whatlang` against the extracted text and proposes a `documents.language` value.
+//!
+//! Deliberately restricted to the 4 languages `ocr::run_tesseract` actually has
+//! trained-data packs for (`languages::OCR_SUPPORTED`): detection only ever reflects
+//! how well OCR read the page, never a guess at a language OCR wasn't tuned for. Any
+//! other ISO 639-1 language is still a valid *manual* tag (see `languages::other_options`),
+//! just never auto-proposed.
 
-use whatlang::{Lang, Script};
+use whatlang::Lang;
 
-/// Returns `"en"`/`"cyr"` only when the extracted text confidently matches
-/// one of the two supported buckets — anything else, or an unreliable
-/// result, returns `None`, never a guess (see TDR 014 §3).
 pub fn detect(text: &str) -> Option<&'static str> {
-    // Script identification doesn't need a confidence gate the way full
-    // language identification does below: a character either falls in the
-    // Cyrillic Unicode ranges or it doesn't, with no ambiguity between
-    // similarly-scored candidate languages to weigh.
-    if whatlang::detect_script(text) == Some(Script::Cyrillic) {
-        return Some("cyr");
+    let info = whatlang::detect(text)?;
+    if !info.is_reliable() {
+        return None;
+    }
+    match info.lang() {
+        Lang::Eng => Some("en"),
+        Lang::Deu => Some("de"),
+        Lang::Nld => Some("nl"),
+        Lang::Ukr => Some("uk"),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_english() {
+        let text = "The quick brown fox jumps over the lazy dog near the riverbank every morning.";
+        assert_eq!(detect(text), Some("en"));
     }
 
-    let info = whatlang::detect(text)?;
-    if info.is_reliable() && info.lang() == Lang::Eng {
-        Some("en")
-    } else {
-        None
+    #[test]
+    fn detects_german() {
+        let text = "Der Bescheid über die Steuererklärung wurde heute per Post zugestellt und muss geprüft werden.";
+        assert_eq!(detect(text), Some("de"));
+    }
+
+    #[test]
+    fn detects_dutch() {
+        let text = "De jaarlijkse belastingaangifte moet voor het einde van de maand worden ingediend bij de belastingdienst.";
+        assert_eq!(detect(text), Some("nl"));
+    }
+
+    #[test]
+    fn detects_ukrainian() {
+        let text = "Цей документ підтверджує оплату рахунку за електроенергію для квартири на вулиці Шевченка.";
+        assert_eq!(detect(text), Some("uk"));
+    }
+
+    #[test]
+    fn does_not_detect_a_language_outside_the_curated_ocr_set() {
+        // Genuinely French text — whatlang can identify it, but since there's no French
+        // OCR pack, detect() must never propose "fr" (it'd misrepresent what OCR read).
+        let text = "Le document que vous avez reçu concerne votre déclaration de revenus pour l'année précédente.";
+        assert_eq!(detect(text), None);
+    }
+
+    #[test]
+    fn returns_none_for_unclear_text() {
+        assert_eq!(detect("a b c 123"), None);
     }
 }

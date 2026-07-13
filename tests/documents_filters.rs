@@ -99,12 +99,12 @@ async fn language_facet_filters_by_selected_language() {
     let user = user_id(&app, "langfacet.docs@example.com").await;
 
     seed_document(&app.state.pool, user, "english.pdf", &["bill"], None, Some("en")).await;
-    seed_document(&app.state.pool, user, "cyrillic.pdf", &["bill"], None, Some("cyr")).await;
+    seed_document(&app.state.pool, user, "german.pdf", &["bill"], None, Some("de")).await;
 
     let response = common::get_with_cookie(&app, "/documents?lang=en", &cookie).await;
     let body = common::body_string(response).await;
     assert!(body.contains("english.pdf"));
-    assert!(!body.contains("cyrillic.pdf"));
+    assert!(!body.contains("german.pdf"));
 }
 
 #[tokio::test]
@@ -131,13 +131,13 @@ async fn language_facet_ors_multiple_selected_values() {
     let user = user_id(&app, "langor.docs@example.com").await;
 
     seed_document(&app.state.pool, user, "english.pdf", &["bill"], None, Some("en")).await;
-    seed_document(&app.state.pool, user, "cyrillic.pdf", &["bill"], None, Some("cyr")).await;
+    seed_document(&app.state.pool, user, "german.pdf", &["bill"], None, Some("de")).await;
     seed_document(&app.state.pool, user, "unset_lang.pdf", &["bill"], None, None).await;
 
-    let response = common::get_with_cookie(&app, "/documents?lang=en&lang=cyr", &cookie).await;
+    let response = common::get_with_cookie(&app, "/documents?lang=en&lang=de", &cookie).await;
     let body = common::body_string(response).await;
     assert!(body.contains("english.pdf"));
-    assert!(body.contains("cyrillic.pdf"));
+    assert!(body.contains("german.pdf"));
     assert!(!body.contains("unset_lang.pdf"));
 }
 
@@ -215,7 +215,7 @@ async fn facets_combine_with_each_other_and_with_search_and_sort() {
     let user = user_id(&app, "combo.docs@example.com").await;
 
     seed_document(&app.state.pool, user, "matches_all.pdf", &["insurance"], Some(date(2026, 3, 14)), Some("en")).await;
-    seed_document(&app.state.pool, user, "wrong_language.pdf", &["insurance"], Some(date(2026, 3, 14)), Some("cyr")).await;
+    seed_document(&app.state.pool, user, "wrong_language.pdf", &["insurance"], Some(date(2026, 3, 14)), Some("de")).await;
     seed_document(&app.state.pool, user, "wrong_year.pdf", &["insurance"], Some(date(2025, 3, 14)), Some("en")).await;
 
     let response = common::get_with_cookie(&app, "/documents?tags=insurance&date_year=2026&lang=en&sort=date_issued_desc", &cookie).await;
@@ -305,7 +305,7 @@ async fn tag_facet_counts_narrow_when_a_language_filter_is_active() {
     let user = user_id(&app, "tagcountnarrow.docs@example.com").await;
 
     seed_document(&app.state.pool, user, "en_insurance.pdf", &["insurance"], None, Some("en")).await;
-    seed_document(&app.state.pool, user, "cyr_insurance.pdf", &["insurance"], None, Some("cyr")).await;
+    seed_document(&app.state.pool, user, "de_insurance.pdf", &["insurance"], None, Some("de")).await;
     seed_document(&app.state.pool, user, "en_utilities.pdf", &["utilities"], None, Some("en")).await;
 
     let unfiltered = common::get_with_cookie(&app, "/documents", &cookie).await;
@@ -330,7 +330,7 @@ async fn language_facet_counts_narrow_when_a_tag_filter_is_active() {
 
     seed_document(&app.state.pool, user, "en_insurance.pdf", &["insurance"], None, Some("en")).await;
     seed_document(&app.state.pool, user, "en_utilities.pdf", &["utilities"], None, Some("en")).await;
-    seed_document(&app.state.pool, user, "cyr_insurance.pdf", &["insurance"], None, Some("cyr")).await;
+    seed_document(&app.state.pool, user, "de_insurance.pdf", &["insurance"], None, Some("de")).await;
 
     let unfiltered = common::get_with_cookie(&app, "/documents", &cookie).await;
     let unfiltered_body = common::body_string(unfiltered).await;

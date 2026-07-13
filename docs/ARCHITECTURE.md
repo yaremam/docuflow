@@ -57,8 +57,9 @@ page, just one reached without a session cookie (see §3/§4 below).
 | Sessions | `tower-sessions` + `tower-sessions-sqlx-store` | Postgres-backed server-side sessions; self-migrates its own table |
 | Auth | `argon2` | password hashing only — no OAuth/SSO yet |
 | Blob storage | `aws-sdk-s3` against MinIO (dev) / real S3 (prod) | same code path both ways, chosen via env vars only; MinIO replaced LocalStack 2026-07-13 — LocalStack Community's `PERSISTENCE=1` never actually persisted S3 object data across restarts (verified empirically), MinIO's does |
-| OCR | `tesseract` CLI via `tokio::process::Command`, always `-l eng+rus` | shelled out, not an FFI crate — `tesseract-ocr` + `tesseract-ocr-rus` apt packages in `Dockerfile`'s runtime stage, zero new Cargo dependency; multi-language mode recognizes Cyrillic-script text with no per-document language selection needed to run OCR itself — see TDR 011 |
-| Language detection | `whatlang` crate, script-level for the Cyrillic bucket / language-level for English | pure Rust, no system dependency; populates `documents.language` from `ocr_text` — see TDR 014 |
+| OCR | `tesseract` CLI via `tokio::process::Command`, always `-l eng+deu+nld+ukr` | shelled out, not an FFI crate — `tesseract-ocr` + `tesseract-ocr-deu`/`-nld`/`-ukr` apt packages in `Dockerfile`'s runtime stage (Russian pack retired 2026-07-13), zero new Cargo dependency; multi-language mode picks the right trained data per block with no per-document language selection needed to run OCR itself — see TDR 011, widened by TDR 020 |
+| Language detection | `whatlang` crate, restricted to the 4 OCR-supported languages | pure Rust, no system dependency; populates `documents.language` from `ocr_text`, never proposing a code OCR wasn't tuned for — see TDR 014, generalized by TDR 020 |
+| Language validation/naming | `isolang` crate, full ISO 639-1 table | backs `documents.language`'s open-ended "any language" tagging (`src/languages.rs`) independently of which languages OCR itself supports — see TDR 020 |
 | Repeated query params | `axum-extra`'s `Query` (backed by `serde_html_form`), only on `/documents`'s facet params | `axum::extract::Query` (`serde_urlencoded`) can't collect `tags=a&tags=b` into a `Vec<String>` — see TDR 015 §3; every other route keeps the standard `axum::extract::Query`. Feature 016 also depends on `serde_html_form` directly (pinned to the same version) to parse a saved collection's stored query string the same way. |
 | EXIF reading | `kamadak-exif` crate, `DateTimeOriginal`/`DateTime` tags only | pure Rust EXIF reader; feeds `ocr_suggested_date_issued` as a fallback when OCR text has no recognizable date — see TDR 019 |
 | PDF rasterization | `pdftoppm` (`poppler-utils`) CLI via `tokio::process::Command` | same "shell out, don't link" precedent as `tesseract`; rasterizes each page to a PNG, then each page goes through the existing image-OCR path — see TDR 010 |
@@ -209,7 +210,7 @@ erDiagram
         text ocr_status "pending|processing|done|failed|skipped"
         text ocr_text
         text ocr_error
-        text language "feature 014, nullable, en|cyr"
+        text language "feature 014, nullable, any ISO 639-1 code (feature 020)"
         timestamptz created_at
         timestamptz updated_at
     }
@@ -358,17 +359,22 @@ system, not any one feature's design.
   those two routes comes from the `scan_sessions` row the path token
   resolves to, checked by hand inside `handlers::scan`.
 - **`tesseract-ocr`, (since feature 010) `poppler-utils`, and (since
-  feature 011) `tesseract-ocr-rus` are host/system dependencies, not Cargo
-  ones** — the Docker runtime image installs all three via `apt-get` (see
-  `Dockerfile`), so the containerized app needs nothing extra. Anyone
-  running the app or `cargo test`/`cargo run` *outside* Docker needs
-  `tesseract-ocr`, `tesseract-ocr-rus`, and `poppler-utils` (for its
+  feature 011, widened by feature 020) `tesseract-ocr-deu`/`-nld`/`-ukr`
+  are host/system dependencies, not Cargo ones** — the Docker runtime
+  image installs all of them via `apt-get` (see `Dockerfile`), so the
+  containerized app needs nothing extra. Anyone running the app or `cargo
+  test`/`cargo run` *outside* Docker needs `tesseract-ocr`,
+  `tesseract-ocr-deu`/`-nld`/`-ukr`, and `poppler-utils` (for its
   `pdftoppm` binary) installed on their own machine, or the relevant
   document-upload OCR tests soft-skip (checks `which tesseract`/
-  `which pdftoppm`, and for the Cyrillic test, whether `tesseract
-  --list-langs` includes `rus`) and any real upload's `ocr_status` will sit
-  at `'processing'`/never advance, or Cyrillic text will OCR as garbled
-  Latin-script guesses instead of failing outright.
+  `which pdftoppm`, and per-language, whether `tesseract --list-langs`
+  includes `deu`/`nld`/`ukr`) and any real upload's `ocr_status` will sit
+  at `'processing'`/never advance, or German/Dutch/Ukrainian text will OCR
+  as garbled guesses instead of failing outright. On a host without `sudo`
+  (no `apt-get install` possible), a `TESSDATA_PREFIX` pointed at a
+  scratch directory with the relevant `*.traineddata` files downloaded
+  from `tessdata_fast` works too — see feature 011's precedent for this
+  same workaround.
 
 ## 7. Feature-by-feature decision log
 
@@ -378,6 +384,7 @@ first.
 
 | Feature | TDR | Chosen approach | Why (one line) |
 |---|---|---|---|
+| General language support (German/Dutch/Ukrainian OCR, full-world tagging) | [020](tdr/020_general_language_support_design.md) | `documents.language` opened to any ISO 639-1 code (validated via `isolang`, not a CHECK enum); OCR pack set widened to `eng+deu+nld+ukr` (Russian pack retired); detection stays restricted to those 4 codes | Field flexibility and OCR-pack coverage are separable concerns — "any language" tagging doesn't require OCR to be tuned for all of them (TDR 020 §2-3) |
 | EXIF-based issued-date suggestion | [019](tdr/019_exif_issued_date_suggestion_design.md) | `kamadak-exif` reads `DateTimeOriginal`/`DateTime`, used only as a fallback when OCR text has no recognizable date; reuses the existing `ocr_suggested_date_issued` column/UI as-is, no new schema | A photo's capture date is a weaker signal than a date printed on the document, so OCR wins when both exist; reusing feature 012's column/UI keeps this additive rather than a parallel suggestion mechanism (TDR 019 §1) |
 | Narrowed smart-filter facet counts | [018](tdr/018_narrowed_facet_counts_design.md) | Each facet option's count is its own `count_documents` call with that facet's own dimension pinned to one candidate and every other active facet left as-is; candidate sets (which tags/years exist) stay unfiltered | Closes the gap TDR 015 §2 named and deferred; accepted ~15-20 small queries per page load over a more complex batched query, given personal-scale document counts (TDR 018 §2) |
 | Rename a saved smart collection | [017](tdr/017_rename_saved_collection_design.md) | `POST /documents/collections/:id/rename` updates only `name`, reusing `CollectionName`'s validation; no confirmation step, matching `delete_collection`'s precedent | Removes the friction delete-and-re-save had (losing `created_at`/list position, having to reconstruct the query by hand) |
@@ -416,14 +423,16 @@ gaps:
 - **Multi-user tenants** (invite flow, membership roles) — schema/types
   already distinguish `TenantId`/`UserId` in anticipation, but no UI or
   membership table exists.
-- **Proper Ukrainian/Serbian language support** — feature 014's
-  `documents.language` is a generic English/Cyrillic-script bucket, not
-  per-language values; Ukrainian and Serbian-Cyrillic text lands in the
-  same `cyr` bucket as everything else, with OCR quality still limited by
-  the shared `rus` trained-data pack (missing Ukrainian-only letters like
-  і/ї/є/ґ), and Serbian's common Latin-script form doesn't match either
-  bucket. Dedicated trained-data packs and distinct field values are a
-  separate, not-yet-built backlog item.
+- **Proper Serbian OCR support** — feature 020 gave Ukrainian its own
+  trained-data pack and language-field value (resolving the previous
+  Ukrainian/Serbian generic-Cyrillic-bucket limitation for Ukrainian),
+  and opened `documents.language` to any ISO 639-1 code including `sr`,
+  but Serbian has no dedicated OCR trained-data pack yet — Serbian text
+  (Cyrillic or Latin) OCRs through whichever of the 4 curated packs
+  happens to match best, not a Serbian-tuned one. A dedicated
+  `tesseract-ocr-srp` pack is a separate, not-yet-built backlog item
+  (deliberately deferred out of feature 020, per the user's explicit
+  direction 2026-07-13).
 - **Non-English month names in date extraction** — feature 012's
   `date_extract.rs` recognizes English month names and numeric/ISO
   shapes only, even though feature 011 added Cyrillic OCR; Cyrillic (or

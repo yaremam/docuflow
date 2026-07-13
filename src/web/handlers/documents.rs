@@ -495,12 +495,15 @@ pub async fn list(
         });
     }
 
-    // The *candidate set* for each facet (which tags/years/months exist at
-    // all) stays the tenant's unfiltered full set — only each candidate's
-    // displayed *count*, fetched separately below via `count_documents`,
-    // narrows by whichever other facets are currently active (TDR 018 §3,
-    // AC-5). Language's candidate set is fixed (en/cyr/unset), so it needs
-    // no discovery query at all.
+    // The *candidate set* for each facet (which tags/years/months/languages
+    // exist at all) stays the tenant's unfiltered full set — only each
+    // candidate's displayed *count*, fetched separately below via
+    // `count_documents`, narrows by whichever other facets are currently
+    // active (TDR 018 §3, AC-5). Since feature 020 opened `language` up to
+    // any ISO 639-1 code, its candidate set is no longer fixed either — it
+    // needs the same discover-then-narrow-count pattern as tags below,
+    // rather than the 3 hardcoded `en`/`cyr`/`unset` queries feature 018
+    // originally wrote.
     let tag_rows = sqlx::query!(
         "select unnest(tags) as tag, count(*) as count from documents where tenant_id = $1 group by tag order by count(*) desc, tag limit 10",
         tenancy.tenant_id.0,
@@ -577,18 +580,33 @@ pub async fn list(
     let undated_count =
         count_documents(&state, tenancy.tenant_id.0, tag_filter.as_deref(), &query.tags, None, None, true, &lang_values, lang_unset).await?;
 
-    let en_count =
-        count_documents(&state, tenancy.tenant_id.0, tag_filter.as_deref(), &query.tags, date_year, date_month, query.undated, &["en".to_string()], false)
-            .await?;
-    let cyr_count =
-        count_documents(&state, tenancy.tenant_id.0, tag_filter.as_deref(), &query.tags, date_year, date_month, query.undated, &["cyr".to_string()], false)
-            .await?;
+    let language_rows = sqlx::query!(
+        "select distinct language from documents where tenant_id = $1 and language is not null order by language",
+        tenancy.tenant_id.0,
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let mut language_facets = Vec::with_capacity(language_rows.len() + 1);
+    for row in language_rows {
+        let Some(code) = row.language else { continue };
+        let count = count_documents(
+            &state,
+            tenancy.tenant_id.0,
+            tag_filter.as_deref(),
+            &query.tags,
+            date_year,
+            date_month,
+            query.undated,
+            std::slice::from_ref(&code),
+            false,
+        )
+        .await?;
+        let checked = lang_values.iter().any(|v| v == &code);
+        let label = crate::languages::display_name(&code);
+        language_facets.push(LanguageFacetOption { value: code, label, count, checked });
+    }
     let unset_count = count_documents(&state, tenancy.tenant_id.0, tag_filter.as_deref(), &query.tags, date_year, date_month, query.undated, &[], true).await?;
-    let language_facets = vec![
-        LanguageFacetOption { value: "en", label: "English", count: en_count, checked: lang_values.iter().any(|v| v == "en") },
-        LanguageFacetOption { value: "cyr", label: "Cyrillic", count: cyr_count, checked: lang_values.iter().any(|v| v == "cyr") },
-        LanguageFacetOption { value: "unset", label: "Not set", count: unset_count, checked: lang_unset },
-    ];
+    language_facets.push(LanguageFacetOption { value: "unset".to_string(), label: "Not set".to_string(), count: unset_count, checked: lang_unset });
 
     let mut applied_filters: Vec<AppliedFilterChip> = Vec::new();
     for tag in &query.tags {
@@ -616,13 +634,9 @@ pub async fn list(
     }
     for lang_value in &query.lang {
         let remaining: Vec<String> = query.lang.iter().filter(|v| *v != lang_value).cloned().collect();
-        let label = match lang_value.as_str() {
-            "en" => "English",
-            "cyr" => "Cyrillic",
-            _ => "Not set",
-        };
+        let label = if lang_value == "unset" { "Not set".to_string() } else { crate::languages::display_name(lang_value) };
         applied_filters.push(AppliedFilterChip {
-            label: label.to_string(),
+            label,
             remove_href: build_documents_url(&query.q, sort.as_str(), &query.tags, date_year, date_month, query.undated, &remaining),
         });
     }
@@ -743,6 +757,8 @@ pub async fn show(
         ocr_status: row.ocr_status,
         ocr_text: row.ocr_text,
         language: row.language.unwrap_or_default(),
+        supported_language_options: crate::languages::supported_options(),
+        other_language_options: crate::languages::other_options(),
     })
 }
 

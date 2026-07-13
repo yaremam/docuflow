@@ -63,13 +63,73 @@ async fn english_text_is_detected_and_shown_after_ocr() {
 }
 
 #[tokio::test]
-async fn cyrillic_script_text_is_detected_and_shown_after_ocr() {
+async fn german_text_is_detected_and_shown_after_ocr() {
     if !tesseract_available() {
-        eprintln!("skipping cyrillic_script_text_is_detected_and_shown_after_ocr: `tesseract` not found on PATH");
+        eprintln!("skipping german_text_is_detected_and_shown_after_ocr: `tesseract` not found on PATH");
         return;
     }
-    if !common::tesseract_has_lang("rus") {
-        eprintln!("skipping cyrillic_script_text_is_detected_and_shown_after_ocr: tesseract-ocr-rus (rus.traineddata) not installed");
+    if !common::tesseract_has_lang("deu") {
+        eprintln!("skipping german_text_is_detected_and_shown_after_ocr: tesseract-ocr-deu (deu.traineddata) not installed");
+        return;
+    }
+
+    let app = common::test_state().await;
+    let uploaded = common::upload_and_wait_for_ocr(
+        &app,
+        "germanlang.docs@example.com",
+        "tests/fixtures/german_sample.png",
+        "german_sample.png",
+        "image/png",
+    )
+    .await;
+    assert_eq!(uploaded.outcome.status, "done");
+
+    let row = sqlx::query!("select language from documents where id = $1", uploaded.id).fetch_one(&app.state.pool).await.unwrap();
+    assert_eq!(row.language.as_deref(), Some("de"));
+
+    let response = common::get_with_cookie(&app, &format!("/documents/{}", uploaded.id), &uploaded.cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains(r#"<option value="de" selected>"#), "expected German pre-selected in the language field, got: {body}");
+}
+
+#[tokio::test]
+async fn dutch_text_is_detected_and_shown_after_ocr() {
+    if !tesseract_available() {
+        eprintln!("skipping dutch_text_is_detected_and_shown_after_ocr: `tesseract` not found on PATH");
+        return;
+    }
+    if !common::tesseract_has_lang("nld") {
+        eprintln!("skipping dutch_text_is_detected_and_shown_after_ocr: tesseract-ocr-nld (nld.traineddata) not installed");
+        return;
+    }
+
+    let app = common::test_state().await;
+    let uploaded = common::upload_and_wait_for_ocr(
+        &app,
+        "dutchlang.docs@example.com",
+        "tests/fixtures/dutch_sample.png",
+        "dutch_sample.png",
+        "image/png",
+    )
+    .await;
+    assert_eq!(uploaded.outcome.status, "done");
+
+    let row = sqlx::query!("select language from documents where id = $1", uploaded.id).fetch_one(&app.state.pool).await.unwrap();
+    assert_eq!(row.language.as_deref(), Some("nl"));
+
+    let response = common::get_with_cookie(&app, &format!("/documents/{}", uploaded.id), &uploaded.cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains(r#"<option value="nl" selected>"#), "expected Dutch pre-selected in the language field, got: {body}");
+}
+
+#[tokio::test]
+async fn ukrainian_text_is_detected_and_shown_after_ocr() {
+    if !tesseract_available() {
+        eprintln!("skipping ukrainian_text_is_detected_and_shown_after_ocr: `tesseract` not found on PATH");
+        return;
+    }
+    if !common::tesseract_has_lang("ukr") {
+        eprintln!("skipping ukrainian_text_is_detected_and_shown_after_ocr: tesseract-ocr-ukr (ukr.traineddata) not installed");
         return;
     }
 
@@ -85,11 +145,11 @@ async fn cyrillic_script_text_is_detected_and_shown_after_ocr() {
     assert_eq!(uploaded.outcome.status, "done");
 
     let row = sqlx::query!("select language from documents where id = $1", uploaded.id).fetch_one(&app.state.pool).await.unwrap();
-    assert_eq!(row.language.as_deref(), Some("cyr"));
+    assert_eq!(row.language.as_deref(), Some("uk"));
 
     let response = common::get_with_cookie(&app, &format!("/documents/{}", uploaded.id), &uploaded.cookie).await;
     let body = common::body_string(response).await;
-    assert!(body.contains(r#"<option value="cyr" selected>"#), "expected Cyrillic pre-selected in the language field, got: {body}");
+    assert!(body.contains(r#"<option value="uk" selected>"#), "expected Ukrainian pre-selected in the language field, got: {body}");
 }
 
 #[tokio::test]
@@ -111,12 +171,12 @@ async fn manually_set_language_is_never_overwritten_by_a_later_ocr_pass() {
     assert_eq!(uploaded.outcome.status, "done");
     // The fixture is genuinely English, so auto-detection would set "en" —
     // manually override it to prove a real user choice survives a later pass.
-    let form_body = "title=Manually+set&tags=&date_issued=&language=cyr";
+    let form_body = "title=Manually+set&tags=&date_issued=&language=de";
     let response = common::post_form_with_cookie(&app, &format!("/documents/{}", uploaded.id), &uploaded.cookie, form_body).await;
     assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
 
     let row = sqlx::query!("select language from documents where id = $1", uploaded.id).fetch_one(&app.state.pool).await.unwrap();
-    assert_eq!(row.language.as_deref(), Some("cyr"), "manual override should have taken effect");
+    assert_eq!(row.language.as_deref(), Some("de"), "manual override should have taken effect");
 
     // Reprocessing (feature 013) re-runs run_ocr end to end, which would
     // auto-detect "en" again if the write weren't guarded.
@@ -125,7 +185,7 @@ async fn manually_set_language_is_never_overwritten_by_a_later_ocr_pass() {
     let _ = common::wait_for_ocr_outcome(&app, uploaded.id, std::time::Duration::from_secs(10)).await;
 
     let row = sqlx::query!("select language from documents where id = $1", uploaded.id).fetch_one(&app.state.pool).await.unwrap();
-    assert_eq!(row.language.as_deref(), Some("cyr"), "a later OCR pass must never overwrite a manually-set language");
+    assert_eq!(row.language.as_deref(), Some("de"), "a later OCR pass must never overwrite a manually-set language");
 }
 
 #[tokio::test]
@@ -152,10 +212,12 @@ async fn an_out_of_set_language_value_is_rejected() {
     let user = user_id(&app, "badlang.docs@example.com").await;
     let doc_id = seed_document_with_language(&app.state.pool, user, "untitled.pdf", None).await;
 
-    let form_body = "title=x&tags=&date_issued=&language=fr";
+    let form_body = "title=x&tags=&date_issued=&language=xx";
     let response = common::post_form_with_cookie(&app, &format!("/documents/{doc_id}"), &cookie, form_body).await;
     // Axum's `Form` extractor rejects a failed deserialize with 422 (well-formed
     // request, semantically invalid), matching signup_page.rs's precedent.
+    // "xx" isn't a real ISO 639-1 code (unlike "fr", which is now a perfectly
+    // valid manual tag since feature 020 opened the field to any of them).
     assert_eq!(response.status(), axum::http::StatusCode::UNPROCESSABLE_ENTITY);
 }
 

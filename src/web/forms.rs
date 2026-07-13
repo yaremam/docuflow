@@ -384,30 +384,33 @@ impl DateIssuedField {
     }
 }
 
-/// A document's language, closed to exactly the buckets `language_detect`
-/// can produce (see TDR 014) — `""` clears the field, mirroring
-/// `ProfileField`/`DateIssuedField`'s blank-means-clear convention. Rejects
-/// anything outside `{"", "en", "cyr"}` server-side, even though the
-/// `<select>` in `document_show.html` only ever offers this same closed
-/// set — per CLAUDE.md's "validate at boundaries" rule, a request doesn't
-/// have to come from that form.
+/// A document's language — any real ISO 639-1 code (see `crate::languages`), not just
+/// the four `ocr::run_tesseract` can actually OCR (feature 020 generalizes feature 014's
+/// closed `en`/`cyr` script-bucket vocabulary). `""` clears the field, mirroring
+/// `ProfileField`/`DateIssuedField`'s blank-means-clear convention. Rejects anything
+/// `crate::languages::is_valid` doesn't recognize server-side, even though the
+/// `<select>` in `document_show.html` only ever offers valid codes — per CLAUDE.md's
+/// "validate at boundaries" rule, a request doesn't have to come from that form.
 #[derive(Debug, Default, Clone, serde::Deserialize)]
 #[serde(try_from = "String")]
 pub struct Language(Option<String>);
 
 #[derive(Debug, thiserror::Error)]
-#[error("language must be blank, \"en\", or \"cyr\"")]
+#[error("language must be blank or a valid ISO 639-1 code")]
 pub struct LanguageError;
 
 impl TryFrom<String> for Language {
     type Error = LanguageError;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        match value.trim() {
-            "" => Ok(Self(None)),
-            "en" => Ok(Self(Some("en".to_string()))),
-            "cyr" => Ok(Self(Some("cyr".to_string()))),
-            _ => Err(LanguageError),
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Ok(Self(None));
+        }
+        if crate::languages::is_valid(trimmed) {
+            Ok(Self(Some(trimmed.to_string())))
+        } else {
+            Err(LanguageError)
         }
     }
 }

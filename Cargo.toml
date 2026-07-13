@@ -56,6 +56,7 @@ serde_html_form = "=0.2.8"
 
 # Визначення дати зйомки документа з EXIF-метаданих зображення
 kamadak-exif = "0.6.1"
+isolang = { version = "2.4.0", features = ["list_languages"] }
 
 [dev-dependencies]
 http-body-util = "0.1.3"

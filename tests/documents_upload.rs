@@ -322,8 +322,8 @@ async fn cyrillic_image_upload_is_correctly_ocrd() {
         eprintln!("skipping cyrillic_image_upload_is_correctly_ocrd: `tesseract` not found on PATH");
         return;
     }
-    if !common::tesseract_has_lang("rus") {
-        eprintln!("skipping cyrillic_image_upload_is_correctly_ocrd: tesseract-ocr-rus (rus.traineddata) not installed");
+    if !common::tesseract_has_lang("ukr") {
+        eprintln!("skipping cyrillic_image_upload_is_correctly_ocrd: tesseract-ocr-ukr (ukr.traineddata) not installed");
         return;
     }
 
