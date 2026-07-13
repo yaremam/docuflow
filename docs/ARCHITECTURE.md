@@ -22,7 +22,7 @@ flowchart TB
 
     Phone["Phone browser<br/>(never logged in)"]
     Postgres[("PostgreSQL<br/>users · tenants · documents ·<br/>password_reset_tokens · scan_sessions · sessions")]
-    S3[("S3 / LocalStack<br/>profile pictures, document blobs")]
+    S3[("S3 / MinIO<br/>profile pictures, document blobs")]
     SMTP[["SMTP (Mailpit dev / real relay prod)<br/>password-reset emails"]]
     Jaeger[["Jaeger<br/>OTLP gRPC :4317, UI :16686"]]
     Tesseract[["tesseract CLI<br/>(subprocess, not a network service)"]]
@@ -56,7 +56,7 @@ page, just one reached without a session cookie (see §3/§4 below).
 | Database | PostgreSQL + SQLx 0.8 | compile-time verified queries (`sqlx::query!`/`query_as!`); offline cache in `.sqlx/` |
 | Sessions | `tower-sessions` + `tower-sessions-sqlx-store` | Postgres-backed server-side sessions; self-migrates its own table |
 | Auth | `argon2` | password hashing only — no OAuth/SSO yet |
-| Blob storage | `aws-sdk-s3` against LocalStack (dev) / real S3 (prod) | same code path both ways, chosen via env vars only |
+| Blob storage | `aws-sdk-s3` against MinIO (dev) / real S3 (prod) | same code path both ways, chosen via env vars only; MinIO replaced LocalStack 2026-07-13 — LocalStack Community's `PERSISTENCE=1` never actually persisted S3 object data across restarts (verified empirically), MinIO's does |
 | OCR | `tesseract` CLI via `tokio::process::Command`, always `-l eng+rus` | shelled out, not an FFI crate — `tesseract-ocr` + `tesseract-ocr-rus` apt packages in `Dockerfile`'s runtime stage, zero new Cargo dependency; multi-language mode recognizes Cyrillic-script text with no per-document language selection needed to run OCR itself — see TDR 011 |
 | Language detection | `whatlang` crate, script-level for the Cyrillic bucket / language-level for English | pure Rust, no system dependency; populates `documents.language` from `ocr_text` — see TDR 014 |
 | Repeated query params | `axum-extra`'s `Query` (backed by `serde_html_form`), only on `/documents`'s facet params | `axum::extract::Query` (`serde_urlencoded`) can't collect `tags=a&tags=b` into a `Vec<String>` — see TDR 015 §3; every other route keeps the standard `axum::extract::Query`. Feature 016 also depends on `serde_html_form` directly (pinned to the same version) to parse a saved collection's stored query string the same way. |
@@ -312,8 +312,26 @@ system, not any one feature's design.
   axum-0.8-style `{id}` silently 404s for everyone (owner included) instead
   of failing to compile — caught once already in `router.rs` for
   `/documents/:id`.
-- **`cargo test` truncates the shared dev database** — see schema notes
-  above.
+- **`cargo test` used to truncate the shared dev database** — fixed, see
+  schema notes above (dedicated `doc_manager_db_test`). The blob-storage
+  equivalent of this same bug (`tests/common/mod.rs::test_state()`
+  building its `BlobStore` from the environment, i.e. the real dev
+  bucket, instead of an isolated test bucket) existed until 2026-07-13 —
+  now overridden to `docuflow-uploads-test` right after `state::connect`.
+  If a future test-isolation gap turns up, check *both* halves
+  (`AppState`'s pool and its blob store) rather than assuming fixing one
+  covers the other.
+- **A `<form>` nested inside another `<form>` is invalid HTML that
+  `curl`/endpoint-level tests can't catch.** Found 2026-07-13 in
+  `document_show.html`'s "Use this date" button, present since feature
+  012: real browsers drop a nested `<form>`'s opening tag but still
+  process its closing tag against the *outer* form, ending it early —
+  everything rendered afterward (in that case, the Language field and
+  "Save changes" button) ends up outside any form, silently inert.
+  Fixed with the `formaction`/`formmethod`/`formnovalidate`
+  button-override pattern features 016/017 already used. Whenever a page
+  gets a second action alongside an existing form, grep the template for
+  `<form` — there should be exactly one, covering that whole region.
 - **`/static` assets are cached `immutable, max-age=31536000`** by the
   Docker image's response headers — a hard refresh (not just a normal
   reload) is required to see CSS/template changes reflected after a

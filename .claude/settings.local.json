@@ -143,7 +143,9 @@
       "Bash(pkill -f \"target/debug/docuflow\")",
       "Bash(mkdir -p /tmp/claude-1000/-home-myar-src-docuflow/ddca863c-9d07-4918-9e35-602747fc3362/scratchpad/exif_gen)",
       "Bash(cargo init *)",
-      "Bash(cargo run *)"
+      "Bash(cargo run *)",
+      "Read(//var/lib/docker/volumes/docuflow_localstack_data/**)",
+      "Bash(sudo -n ls -la /var/lib/docker/volumes/docuflow_localstack_data/_data/)"
     ]
   }
 }

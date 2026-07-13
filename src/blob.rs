@@ -1,4 +1,4 @@
-//! S3-compatible blob storage (LocalStack in dev, real S3 in prod — the same
+//! S3-compatible blob storage (MinIO in dev, real S3 in prod — the same
 //! code targets either, purely via standard AWS environment variables:
 //! `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
 //! `AWS_REGION`). `stream_upload` uses S3's multipart-upload API in
@@ -51,18 +51,19 @@ fn s3_err(e: impl std::fmt::Debug) -> BlobError {
 }
 
 /// Builds an S3 client from the given (already-loaded) AWS config.
-/// `force_path_style` is required for LocalStack's `http://host:port/bucket`
+/// `force_path_style` is required for MinIO's `http://host:port/bucket`
 /// addressing (real S3 accepts it too, so no environment-specific branching
 /// is needed here). `request_checksum_calculation` is pinned to
 /// `WhenRequired` (off by default) rather than the SDK's own default of
 /// `WhenSupported` — that default silently attaches a CRC32 checksum to
-/// `UploadPart` requests, which LocalStack's multipart-upload
-/// implementation doesn't reconcile with `CompleteMultipartUpload`,
-/// failing every multipart upload with "Checksum Type mismatch". We don't
-/// rely on this integrity feature ourselves, so disabling it is a clean fix
-/// rather than a workaround. `endpoint_override` is set only for the
-/// presign client when `BLOB_PUBLIC_ENDPOINT_URL` is configured (see
-/// `clients_from_env`).
+/// `UploadPart` requests, which caused LocalStack (this project's dev
+/// blob store until 2026-07-13, replaced by MinIO for real persistence —
+/// see `docker-compose.yml`) to fail every multipart upload with
+/// "Checksum Type mismatch" against `CompleteMultipartUpload`. We don't
+/// rely on this integrity feature ourselves, so leaving it disabled is
+/// harmless with MinIO too, not just a LocalStack-specific workaround.
+/// `endpoint_override` is set only for the presign client when
+/// `BLOB_PUBLIC_ENDPOINT_URL` is configured (see `clients_from_env`).
 fn build_client(config: &aws_config::SdkConfig, endpoint_override: Option<String>) -> aws_sdk_s3::Client {
     let mut builder = aws_sdk_s3::config::Builder::from(config)
         .force_path_style(true)
@@ -77,11 +78,11 @@ fn build_client(config: &aws_config::SdkConfig, endpoint_override: Option<String
 /// environment variables, loading the shared AWS config only once. The
 /// second client is used only for generating presigned URLs, and only
 /// differs from the first when `BLOB_PUBLIC_ENDPOINT_URL` is set: in Docker
-/// Compose dev, the app reaches LocalStack via the internal service hostname
-/// (`AWS_ENDPOINT_URL=http://localstack:4566`), but a presigned URL embedded
+/// Compose dev, the app reaches MinIO via the internal service hostname
+/// (`AWS_ENDPOINT_URL=http://minio:9000`), but a presigned URL embedded
 /// in a rendered page must resolve from the *user's own browser* instead —
 /// which can't see Docker's internal network and needs the host-mapped
-/// `localhost:4566`. When unset (real S3, or host-side non-Docker
+/// `localhost:9000`. When unset (real S3, or host-side non-Docker
 /// `cargo run`, where there's only one endpoint and it's already
 /// browser-reachable), the presign client is simply a clone of the first —
 /// no second config load or client build needed.
@@ -239,7 +240,7 @@ impl BlobStore {
 
         // The SDK attaches a CRC32 checksum to the upload_part request by
         // default; `complete_multipart_upload` must echo it back per part or
-        // S3 (and LocalStack) reject the completion with a checksum-type
+        // S3-compatible servers reject the completion with a checksum-type
         // mismatch, since the completion request would otherwise imply "no
         // checksum" for a part that was actually uploaded with one.
         let mut part = CompletedPart::builder().part_number(part_number).e_tag(e_tag);

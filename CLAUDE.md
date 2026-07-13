@@ -4,7 +4,7 @@
 - **Language:** Rust (Latest Stable Edition)
 - **Web Runtime:** Axum + Tokio (Asynchronous Engine)
 - **Database:** PostgreSQL + SQLx (Strict Compile-Time Verified Queries)
-- **Blob Storage:** LocalStack / AWS S3 (Streaming Chunked File Uploads)
+- **Blob Storage:** MinIO / AWS S3 (Streaming Chunked File Uploads)
 - **Telemetry Platform:** OpenTelemetry Core + `tracing` Ecosystem
 - **Local Exporter:** Jaeger UI running at `http://localhost:16686` (gRPC port `4317`)
 - **Version Control:** Jujutsu (`jj`) with Colocated Git Backend (Never use `git add`)

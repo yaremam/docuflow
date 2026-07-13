@@ -102,15 +102,28 @@ pub async fn test_state() -> TestApp {
     let url = test_database_url();
     DB_ENSURED.get_or_init(|| ensure_test_database_exists(&url)).await;
 
-    let (app_state, session_store, session_layer) = state::connect(&url)
+    let (mut app_state, session_store, session_layer) = state::connect(&url)
         .await
         .expect("failed to connect to the test database — is `docker compose up -d` running locally?");
+
+    // `state::connect` reads `BLOB_BUCKET_NAME` from the environment, which
+    // (like `DATABASE_URL`) is the *real* dev bucket's name — tests must
+    // never touch it, same isolation guarantee as the dedicated
+    // `doc_manager_db_test` database above, and for the same reason
+    // (found 2026-07-13: this project already fixed the equivalent DB-side
+    // gap, but the blob-storage side was still reading straight from the
+    // environment, so every `cargo test` run had been uploading to and
+    // deleting from the real dev bucket). Overridden here rather than in
+    // `state::connect` itself, since production code has no reason to know
+    // about a test-only bucket name.
+    let (client, presign_client) = docuflow::blob::clients_from_env().await;
+    app_state.blob = docuflow::blob::BlobStore::new(client, presign_client, "docuflow-uploads-test".to_string());
 
     MIGRATIONS_DONE
         .get_or_init(|| async {
             state::migrate(&app_state.pool, &session_store, &app_state.blob)
                 .await
-                .expect("failed to migrate the test database or ensure the test bucket exists — is `docker compose up -d` running locally (including `localstack`)?");
+                .expect("failed to migrate the test database or ensure the test bucket exists — is `docker compose up -d` running locally (including `minio`)?");
         })
         .await;
 
@@ -138,10 +151,10 @@ pub async fn test_state() -> TestApp {
 
 /// Builds a `TestApp` backed by a lazily-connected pool — suitable only for
 /// routes that never touch the database (or blob storage), like static asset
-/// serving. Avoids paying for a live Postgres/LocalStack connection (and the
+/// serving. Avoids paying for a live Postgres/MinIO connection (and the
 /// migration/truncate cost above) for tests that don't need one. Building
 /// the S3 client itself makes no network call (it only resolves env-var
-/// credentials), so it's safe to construct here even without LocalStack
+/// credentials), so it's safe to construct here even without MinIO
 /// running.
 pub async fn lazy_test_app() -> TestApp {
     let pool = sqlx::PgPool::connect_lazy(&test_database_url())

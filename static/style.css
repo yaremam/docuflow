@@ -467,8 +467,9 @@ a { color: inherit; }
   color: var(--ink-soft);
 }
 .suggestion strong { color: var(--ink); font-weight: 700; }
-.suggestion form { margin: 0; flex-shrink: 0; }
 .btn-suggestion {
+  margin: 0;
+  flex-shrink: 0;
   border: none;
   background: none;
   padding: 0;

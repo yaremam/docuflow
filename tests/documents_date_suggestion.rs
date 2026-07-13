@@ -38,6 +38,59 @@ async fn ocr_with_a_recognizable_date_suggests_it_but_does_not_set_date_issued()
 }
 
 #[tokio::test]
+async fn the_use_this_date_button_is_not_a_form_nested_inside_the_metadata_form() {
+    // Regression test for a real bug (found 2026-07-13): the "Use this
+    // date" button used to be its own `<form action=".../accept_suggested_date">`
+    // nested inside the page's single metadata-edit `<form action="/documents/{id}">`.
+    // Nested `<form>` elements are invalid HTML — browsers drop the inner
+    // form's opening tag but still process its closing tag against the
+    // *outer* form, closing it early. Everything rendered after the
+    // suggestion box (the Language field, the "Save changes" button) ended
+    // up outside any form at all, silently breaking every edit once a
+    // suggestion was showing — completely invisible to endpoint-level
+    // tests (posting straight to a URL bypasses HTML parsing entirely,
+    // which is exactly how this bug went unnoticed). Fixed with the same
+    // `formaction`/`formmethod` button-override pattern features 016/017
+    // already use for this exact reason.
+    if !tesseract_available() {
+        eprintln!("skipping the_use_this_date_button_is_not_a_form_nested_inside_the_metadata_form: `tesseract` not found on PATH");
+        return;
+    }
+
+    let app = common::test_state().await;
+    let uploaded = common::upload_and_wait_for_ocr(
+        &app,
+        "nonestedform.docs@example.com",
+        "tests/fixtures/dated_sample.png",
+        "dated_sample.png",
+        "image/png",
+    )
+    .await;
+    assert_eq!(uploaded.outcome.status, "done");
+
+    let response = common::get_with_cookie(&app, &format!("/documents/{}", uploaded.id), &uploaded.cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("Use this date"), "expected a date suggestion to be showing, got: {body}");
+
+    let metadata_form_start = body.find(&format!("action=\"/documents/{}\"", uploaded.id)).expect("expected the metadata form");
+    let suggestion_button = body.find("Use this date").expect("expected the suggestion button");
+    assert!(metadata_form_start < suggestion_button, "the metadata form should open before the suggestion button");
+
+    // No second `<form` between the outer form's opening tag and the
+    // suggestion button — i.e. the button lives directly inside the one
+    // metadata form, not a nested form of its own.
+    let between = &body[metadata_form_start..suggestion_button];
+    assert!(!between.contains("<form"), "the suggestion button must not be inside a nested <form>, got the region: {between}");
+
+    // The button reaches its own endpoint via formaction/formmethod, not
+    // via being wrapped in a second form.
+    assert!(
+        body.contains(&format!("formaction=\"/documents/{}/accept_suggested_date\"", uploaded.id)),
+        "expected the suggestion button to use a formaction override, got: {body}"
+    );
+}
+
+#[tokio::test]
 async fn no_suggestion_when_ocr_text_has_no_recognizable_date() {
     if !tesseract_available() {
         eprintln!("skipping no_suggestion_when_ocr_text_has_no_recognizable_date: `tesseract` not found on PATH");

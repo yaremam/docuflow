@@ -25,18 +25,27 @@ services:
     environment:
       - COLLECTOR_OTLP_ENABLED=true
 
-  localstack:
-    image: localstack/localstack:3
+  # S3-compatible blob storage for local dev (real S3 in prod — see
+  # `src/blob.rs`, driven purely by standard AWS env vars below). Was
+  # LocalStack until 2026-07-13: LocalStack Community's `PERSISTENCE=1`
+  # flag does not actually persist S3 object data across container
+  # restarts (verified empirically — its data volume stayed empty after
+  # hours of real traffic; full state persistence is a LocalStack Pro
+  # feature). MinIO's persistence is a real, free, self-hosted volume
+  # write — no equivalent gap.
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
     environment:
-      - SERVICES=s3
-      - DEFAULT_REGION=us-east-1
-      - PERSISTENCE=1
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "4566:4566"
+      - "9000:9000" # S3 API
+      - "9001:9001" # web console — browse buckets at http://localhost:9001
     volumes:
-      - localstack_data:/var/lib/localstack
+      - minio_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 2s
       timeout: 3s
       retries: 15
@@ -54,7 +63,7 @@ services:
         condition: service_healthy
       jaeger:
         condition: service_started
-      localstack:
+      minio:
         condition: service_healthy
       mailpit:
         condition: service_started
@@ -66,13 +75,13 @@ services:
       # user's own browser — must be the host-mapped address, not an
       # internal Docker Compose hostname.
       APP_BASE_URL: http://localhost:8081
-      AWS_ENDPOINT_URL: http://localstack:4566
+      AWS_ENDPOINT_URL: http://minio:9000
       # Presigned URLs are embedded in rendered pages and followed by the
-      # user's own browser, which can't resolve the internal `localstack`
+      # user's own browser, which can't resolve the internal `minio`
       # service hostname above — only the host-mapped port works there.
-      BLOB_PUBLIC_ENDPOINT_URL: http://localhost:4566
-      AWS_ACCESS_KEY_ID: test
-      AWS_SECRET_ACCESS_KEY: test
+      BLOB_PUBLIC_ENDPOINT_URL: http://localhost:9000
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
       AWS_REGION: us-east-1
       BLOB_BUCKET_NAME: docuflow-uploads
       SMTP_HOST: mailpit
@@ -84,4 +93,4 @@ services:
 
 volumes:
   pgdata:
-  localstack_data:
+  minio_data:

@@ -96,8 +96,8 @@ pub async fn migrate(pool: &PgPool, session_store: &PostgresStore, blob: &BlobSt
 
     // Several test binaries (separate processes) can call this at once on a
     // fresh environment, all racing to create the same S3 bucket — observed
-    // to make LocalStack return a malformed response to one of the racing
-    // HeadBucket calls. A Postgres advisory lock serializes them across
+    // to make the dev S3 server return a malformed response to one of the
+    // racing HeadBucket calls. A Postgres advisory lock serializes them across
     // processes, the same coordination `sqlx::migrate!` already relies on
     // internally for its own cross-process safety.
     let mut conn = pool.acquire().await?;

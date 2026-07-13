@@ -1,5 +1,5 @@
-//! Requires `docker compose up -d localstack` (or the full stack) running —
-//! this test round-trips a real upload through LocalStack's S3 API.
+//! Requires `docker compose up -d minio` (or the full stack) running —
+//! this test round-trips a real upload through MinIO's S3 API.
 
 mod common;
 
@@ -40,11 +40,14 @@ async fn uploading_a_picture_streams_it_to_blob_storage_and_saves_the_key() {
     assert!(key.starts_with("profile-pictures/"));
 
     // Confirm the object actually landed in blob storage (not just that our
-    // code believes it did) by fetching it straight from LocalStack's S3 API.
+    // code believes it did) by fetching it straight from MinIO's S3 API
+    // — the same isolated test bucket `common::test_state()` points
+    // `app_state.blob` at, never the real dev bucket (mirrors the
+    // dedicated `doc_manager_db_test` database's isolation guarantee).
     let (s3_client, _) = docuflow::blob::clients_from_env().await;
     let object = s3_client
         .get_object()
-        .bucket("docuflow-uploads")
+        .bucket("docuflow-uploads-test")
         .key(&key)
         .send()
         .await

@@ -1,14 +1,14 @@
 [env]
-# Local dev-stack credentials (Postgres/LocalStack/Mailpit via `docker
+# Local dev-stack credentials (Postgres/MinIO/Mailpit via `docker
 # compose up -d`), mirroring `.env` — set here too so a bare `cargo test`/
 # `cargo run`/`cargo check`/`cargo clippy`/`cargo sqlx` picks them up
 # without needing `source .env` (or an inline env-var prefix) before every
 # single invocation. Not secrets: these are fixed, well-known local-only
 # dev credentials, not real production values.
 DATABASE_URL = "postgres://admin:secretpassword@localhost:5432/doc_manager_db"
-AWS_ENDPOINT_URL = "http://localhost:4566"
-AWS_ACCESS_KEY_ID = "test"
-AWS_SECRET_ACCESS_KEY = "test"
+AWS_ENDPOINT_URL = "http://localhost:9000"
+AWS_ACCESS_KEY_ID = "minioadmin"
+AWS_SECRET_ACCESS_KEY = "minioadmin"
 AWS_REGION = "us-east-1"
 BLOB_BUCKET_NAME = "docuflow-uploads"
 SMTP_HOST = "localhost"

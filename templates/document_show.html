@@ -85,9 +85,7 @@
             {% if let Some(suggested) = suggested_date_issued_display %}
             <div class="suggestion">
               <p>OCR found a possible date: <strong>{{ suggested }}</strong></p>
-              <form method="post" action="/documents/{{ id }}/accept_suggested_date">
-                <button class="btn-suggestion" type="submit">Use this date</button>
-              </form>
+              <button class="btn-suggestion" type="submit" formaction="/documents/{{ id }}/accept_suggested_date" formmethod="post" formnovalidate>Use this date</button>
             </div>
             {% endif %}
           </div>
