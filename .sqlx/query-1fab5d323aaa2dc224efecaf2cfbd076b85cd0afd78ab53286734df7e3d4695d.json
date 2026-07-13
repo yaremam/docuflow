@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select extract(year from date_issued)::int4 as year, count(*) as count\n         from documents where tenant_id = $1 and date_issued is not null\n         group by year order by year desc",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "year",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "1fab5d323aaa2dc224efecaf2cfbd076b85cd0afd78ab53286734df7e3d4695d"
+}

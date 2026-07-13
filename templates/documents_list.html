@@ -4,85 +4,226 @@
 
 {% block content %}
 <div class="documents-page">
-  <form method="get" action="/documents" class="documents-toolbar">
-    <div class="field search-field">
-      <label for="q">Search by tag</label>
-      <input id="q" name="q" type="text" value="{{ q }}" placeholder="e.g. insurance, 2026, verizon">
+  <form method="get" action="/documents" class="documents-form">
+    <div class="documents-toolbar">
+      <div class="field search-field">
+        <label for="q">Search by tag</label>
+        <input id="q" name="q" type="text" value="{{ q }}" placeholder="e.g. insurance, 2026, verizon">
+      </div>
+      <div class="field sort-field">
+        <label for="sort">Sort by</label>
+        <select id="sort" name="sort">
+          <option value="created_at_desc"{% if sort == "created_at_desc" %} selected{% endif %}>Date uploaded (newest)</option>
+          <option value="created_at_asc"{% if sort == "created_at_asc" %} selected{% endif %}>Date uploaded (oldest)</option>
+          <option value="date_issued_desc"{% if sort == "date_issued_desc" %} selected{% endif %}>Date issued (newest)</option>
+          <option value="date_issued_asc"{% if sort == "date_issued_asc" %} selected{% endif %}>Date issued (oldest)</option>
+          <option value="tags_asc"{% if sort == "tags_asc" %} selected{% endif %}>Tags (A&ndash;Z)</option>
+        </select>
+      </div>
+      <div class="toolbar-actions">
+        <button class="btn btn-outline" type="submit">Apply</button>
+        <a class="btn btn-stamp" href="/documents/new">+ Add document</a>
+        <a class="btn btn-outline" href="/scan">Scan with phone</a>
+      </div>
     </div>
-    <div class="field sort-field">
-      <label for="sort">Sort by</label>
-      <select id="sort" name="sort">
-        <option value="created_at_desc"{% if sort == "created_at_desc" %} selected{% endif %}>Date uploaded (newest)</option>
-        <option value="created_at_asc"{% if sort == "created_at_asc" %} selected{% endif %}>Date uploaded (oldest)</option>
-        <option value="date_issued_desc"{% if sort == "date_issued_desc" %} selected{% endif %}>Date issued (newest)</option>
-        <option value="date_issued_asc"{% if sort == "date_issued_asc" %} selected{% endif %}>Date issued (oldest)</option>
-        <option value="tags_asc"{% if sort == "tags_asc" %} selected{% endif %}>Tags (A&ndash;Z)</option>
-      </select>
-    </div>
-    <div class="toolbar-actions">
-      <button class="btn btn-outline" type="submit">Apply</button>
-      <a class="btn btn-stamp" href="/documents/new">+ Add document</a>
+
+    {% if deleted %}
+    <p class="form-success">Deleted.</p>
+    {% endif %}
+
+    {% if documents.is_empty() && clear_filters_href.is_none() %}
+    <div class="empty-state">
+      <h3>No documents yet</h3>
+      <p>Once you add a bill, policy, or contract, it'll show up here — searchable by tag and sortable by date.</p>
+      <a class="btn btn-stamp" href="/documents/new">+ Add your first document</a>
       <a class="btn btn-outline" href="/scan">Scan with phone</a>
     </div>
-  </form>
+    {% else %}
+    <div class="filters-layout">
+      <div class="sidebar-stack">
+        {% if !collections.is_empty() %}
+        <aside class="panel">
+          <p class="panel-title">My collections</p>
+          <div class="collection-list">
+            {% for collection in collections %}
+            <details class="collection-row">
+              <summary>
+                <a class="collection-link" href="{{ collection.href }}">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6z"></path></svg>
+                  <span class="collection-name">{{ collection.name }}</span>
+                </a>
+                <span class="collection-count">{{ collection.count }}</span>
+                <span class="collection-edit-toggle" aria-label="Rename or delete {{ collection.name }}" title="Rename or delete">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>
+                </span>
+              </summary>
+              <div class="collection-edit-panel">
+                <input type="text" name="name" value="{{ collection.name }}" aria-label="Rename {{ collection.name }}">
+                <button class="btn btn-outline btn-small" type="submit" formaction="/documents/collections/{{ collection.id }}/rename" formmethod="post" formnovalidate>Rename</button>
+                <button class="btn btn-outline btn-small btn-danger-outline" type="submit" formaction="/documents/collections/{{ collection.id }}/delete" formmethod="post" formnovalidate>Delete</button>
+              </div>
+            </details>
+            {% endfor %}
+          </div>
+        </aside>
+        {% endif %}
+      <aside class="filters-panel">
+        <p class="filters-panel-title">
+          Smart filters
+          {% if let Some(href) = clear_filters_href %}
+          <a class="clear-all" href="{{ href }}">Clear all</a>
+          {% endif %}
+        </p>
 
-  {% if deleted %}
-  <p class="form-success">Deleted.</p>
-  {% endif %}
+        <div class="filter-group">
+          <p class="filter-group-title">Tags</p>
+          {% if tag_facets.is_empty() %}
+          <p class="field-hint">No tags yet.</p>
+          {% else %}
+          <div class="filter-options">
+            {% for tag in tag_facets %}
+            <label class="filter-option{% if tag.checked %} is-checked{% endif %}">
+              <input type="checkbox" name="tags" value="{{ tag.name }}"{% if tag.checked %} checked{% endif %}>
+              <span class="filter-option-label">{{ tag.name }}</span>
+              <span class="filter-count">{{ tag.count }}</span>
+            </label>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
 
-  {% if documents.is_empty() %}
-  <div class="empty-state">
-    <h3>No documents yet</h3>
-    <p>Once you add a bill, policy, or contract, it'll show up here — searchable by tag and sortable by date.</p>
-    <a class="btn btn-stamp" href="/documents/new">+ Add your first document</a>
-    <a class="btn btn-outline" href="/scan">Scan with phone</a>
-  </div>
-  {% else %}
-  <div class="doc-list">
-    {% for doc in documents %}
-    <div class="doc-row">
-      <a class="doc-row-main" href="/documents/{{ doc.id }}">
-        {% if doc.is_image %}
-        <div class="doc-thumb"><img src="{{ doc.file_url }}" alt=""></div>
-        {% else %}
-        <div class="doc-thumb doc-thumb-pdf">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 2h9l5 5v15H6z"></path><path d="M15 2v5h5"></path></svg>
-          <span>PDF</span>
+        <div class="filter-group">
+          <p class="filter-group-title">Date issued</p>
+          {% if year_facets.is_empty() && undated_count == 0 %}
+          <p class="field-hint">No issue dates yet.</p>
+          {% else %}
+          <div class="filter-tree">
+            {% for year in year_facets %}
+            <div class="filter-tree-year{% if !year.checked %} is-collapsed{% endif %}">
+              <div class="filter-tree-year-row">
+                <label class="filter-option" style="flex:1;">
+                  <input type="radio" name="date_year" value="{{ year.year }}"{% if year.checked %} checked{% endif %}>
+                  <span class="filter-option-label">{{ year.year }}</span>
+                  <span class="filter-count">{{ year.count }}</span>
+                </label>
+              </div>
+              {% if !year.months.is_empty() %}
+              <div class="filter-tree-months">
+                {% for month in year.months %}
+                <label class="filter-option">
+                  <input type="radio" name="date_month" value="{{ month.value }}"{% if month.checked %} checked{% endif %}>
+                  <span class="filter-option-label">{{ month.label }}</span>
+                  <span class="filter-count">{{ month.count }}</span>
+                </label>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </div>
+            {% endfor %}
+            <label class="filter-option{% if undated_checked %} is-checked{% endif %}">
+              <input type="checkbox" name="undated" value="true"{% if undated_checked %} checked{% endif %}>
+              <span class="filter-option-label">Undated</span>
+              <span class="filter-count">{{ undated_count }}</span>
+            </label>
+          </div>
+          {% endif %}
+        </div>
+
+        <div class="filter-group">
+          <p class="filter-group-title">Language</p>
+          <div class="filter-options">
+            {% for lang in language_facets %}
+            <label class="filter-option{% if lang.checked %} is-checked{% endif %}">
+              <input type="checkbox" name="lang" value="{{ lang.value }}"{% if lang.checked %} checked{% endif %}>
+              <span class="filter-option-label">{{ lang.label }}</span>
+              <span class="filter-count">{{ lang.count }}</span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+      </aside>
+      </div>
+
+      <div class="results-column">
+        {% if !applied_filters.is_empty() %}
+        <div class="applied-filters">
+          <span class="applied-filters-label">Filtered by:</span>
+          {% for chip in applied_filters %}
+          <a class="filter-chip" href="{{ chip.remove_href }}">{{ chip.label }} &times;</a>
+          {% endfor %}
+          {% if let Some(href) = clear_filters_href %}
+          <a class="clear-all-link" href="{{ href }}">Clear all</a>
+          {% endif %}
         </div>
         {% endif %}
-        <div class="doc-row-body">
-          <div class="doc-row-top">
-            <span class="doc-row-title">{{ doc.title }}</span>
-            {% if doc.ocr_status == "done" %}
-            <span class="status">Text ready</span>
-            {% else if doc.ocr_status == "failed" %}
-            <span class="status pending">Processing failed</span>
-            {% else if doc.ocr_status == "skipped" %}
-            <span class="status pending">No text</span>
-            {% else %}
-            <span class="status pending">Processing&hellip;</span>
-            {% endif %}
-          </div>
-          <div class="doc-row-filename">{{ doc.original_filename }}</div>
-          <div class="doc-row-meta">
-            {% for tag in doc.tags %}
-            <span class="tag-chip">{{ tag }}</span>
-            {% endfor %}
-            <span class="doc-row-dates">
-              {% if let Some(date_issued) = doc.date_issued %}
-              Issued {{ date_issued }} &middot;
-              {% endif %}
-              Uploaded {{ doc.uploaded_at }}
-            </span>
-          </div>
+
+        {% if can_save_search %}
+        <div class="save-search">
+          <label for="collection-name">Save this search as</label>
+          <input id="collection-name" type="text" name="name" placeholder="e.g. &ldquo;Medical &amp; insurance&rdquo;">
+          <input type="hidden" name="query" value="{{ save_search_query }}">
+          <button class="btn btn-outline btn-small" type="submit" formaction="/documents/collections" formmethod="post" formnovalidate>Save</button>
         </div>
-      </a>
-      <a class="doc-row-delete" href="/documents/{{ doc.id }}/delete" aria-label="Delete {{ doc.title }}" title="Delete document">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="M6 7l1 13h10l1-13"></path></svg>
-      </a>
+        {% endif %}
+
+        {% if documents.is_empty() %}
+        <div class="empty-state">
+          <h3>No documents match these filters</h3>
+          <p>Try removing a filter or two — or clear them all to see everything again.</p>
+          {% if let Some(href) = clear_filters_href %}
+          <a class="btn btn-outline" href="{{ href }}">Clear all filters</a>
+          {% endif %}
+        </div>
+        {% else %}
+        <div class="doc-list">
+          {% for doc in documents %}
+          <div class="doc-row">
+            <a class="doc-row-main" href="/documents/{{ doc.id }}">
+              {% if doc.is_image %}
+              <div class="doc-thumb"><img src="{{ doc.file_url }}" alt=""></div>
+              {% else %}
+              <div class="doc-thumb doc-thumb-pdf">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 2h9l5 5v15H6z"></path><path d="M15 2v5h5"></path></svg>
+                <span>PDF</span>
+              </div>
+              {% endif %}
+              <div class="doc-row-body">
+                <div class="doc-row-top">
+                  <span class="doc-row-title">{{ doc.title }}</span>
+                  {% if doc.ocr_status == "done" %}
+                  <span class="status">Text ready</span>
+                  {% else if doc.ocr_status == "failed" %}
+                  <span class="status pending">Processing failed</span>
+                  {% else if doc.ocr_status == "skipped" %}
+                  <span class="status pending">No text</span>
+                  {% else %}
+                  <span class="status pending">Processing&hellip;</span>
+                  {% endif %}
+                </div>
+                <div class="doc-row-filename">{{ doc.original_filename }}</div>
+                <div class="doc-row-meta">
+                  {% for tag in doc.tags %}
+                  <span class="tag-chip">{{ tag }}</span>
+                  {% endfor %}
+                  <span class="doc-row-dates">
+                    {% if let Some(date_issued) = doc.date_issued %}
+                    Issued {{ date_issued }} &middot;
+                    {% endif %}
+                    Uploaded {{ doc.uploaded_at }}
+                  </span>
+                </div>
+              </div>
+            </a>
+            <a class="doc-row-delete" href="/documents/{{ doc.id }}/delete" aria-label="Delete {{ doc.title }}" title="Delete document">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="M6 7l1 13h10l1-13"></path></svg>
+            </a>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
     </div>
-    {% endfor %}
-  </div>
-  {% endif %}
+    {% endif %}
+  </form>
 </div>
 {% endblock %}

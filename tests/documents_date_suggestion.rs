@@ -179,3 +179,63 @@ async fn accept_suggested_date_is_tenant_scoped() {
     let body = common::body_string(response).await;
     assert!(body.contains("Use this date"), "another tenant's failed accept attempt must not consume the real owner's suggestion");
 }
+
+#[tokio::test]
+async fn an_exif_capture_date_is_suggested_when_ocr_text_has_no_recognizable_date() {
+    if !tesseract_available() {
+        eprintln!("skipping an_exif_capture_date_is_suggested_when_ocr_text_has_no_recognizable_date: `tesseract` not found on PATH");
+        return;
+    }
+
+    let app = common::test_state().await;
+    let uploaded = common::upload_and_wait_for_ocr(
+        &app,
+        "exifdatesuggest.docs@example.com",
+        "tests/fixtures/exif_dated_sample.jpg",
+        "exif_dated_sample.jpg",
+        "image/jpeg",
+    )
+    .await;
+    assert_eq!(uploaded.outcome.status, "done", "ocr should complete within the timeout even with no legible text");
+    assert_eq!(
+        uploaded.outcome.suggested_date_issued,
+        Some(time::Date::from_calendar_date(2026, time::Month::March, 14).unwrap()),
+        "expected the fixture's embedded EXIF DateTimeOriginal to be used as a fallback suggestion, got: {:?}",
+        uploaded.outcome.suggested_date_issued
+    );
+
+    let response = common::get_with_cookie(&app, &format!("/documents/{}", uploaded.id), &uploaded.cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("Use this date"));
+    assert!(body.contains("2026-03-14"));
+}
+
+#[tokio::test]
+async fn an_ocr_derived_date_takes_priority_over_a_conflicting_exif_capture_date() {
+    if !tesseract_available() {
+        eprintln!("skipping an_ocr_derived_date_takes_priority_over_a_conflicting_exif_capture_date: `tesseract` not found on PATH");
+        return;
+    }
+
+    // This fixture carries both a legible printed "March 15, 2024" date
+    // (OCR-recognizable, same text as dated_sample.png) and an embedded
+    // EXIF DateTimeOriginal of 2020-01-01 — a real, deliberately
+    // conflicting second source, to prove OCR wins rather than merely
+    // being present alongside an absent EXIF value.
+    let app = common::test_state().await;
+    let uploaded = common::upload_and_wait_for_ocr(
+        &app,
+        "ocrwinsoverexif.docs@example.com",
+        "tests/fixtures/dated_sample_with_exif.jpg",
+        "dated_sample_with_exif.jpg",
+        "image/jpeg",
+    )
+    .await;
+    assert_eq!(uploaded.outcome.status, "done");
+    assert_eq!(
+        uploaded.outcome.suggested_date_issued,
+        Some(time::Date::from_calendar_date(2024, time::Month::March, 15).unwrap()),
+        "the OCR-derived date should win over the fixture's conflicting EXIF date, got: {:?}",
+        uploaded.outcome.suggested_date_issued
+    );
+}

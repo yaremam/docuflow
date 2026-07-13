@@ -84,6 +84,62 @@ pub struct DocumentListItem {
     pub ocr_status: String,
 }
 
+/// One checkbox in the Tags facet group (see TDR 015 §3) — `count` is
+/// against the tenant's full document set, not narrowed by any other
+/// currently-active facet (an accepted v1 simplification, AC-10).
+pub struct TagFacetOption {
+    pub name: String,
+    pub count: i64,
+    pub checked: bool,
+}
+
+/// One month row nested under a `YearFacetOption` — only ever populated
+/// for the single currently-selected year, since the date-issued facet
+/// has at most one active year at a time (TDR 015 §3).
+pub struct MonthFacetOption {
+    pub label: &'static str,
+    pub value: u8,
+    pub count: i64,
+    pub checked: bool,
+}
+
+pub struct YearFacetOption {
+    pub year: i32,
+    pub count: i64,
+    pub checked: bool,
+    pub months: Vec<MonthFacetOption>,
+}
+
+/// One checkbox in the Language facet group — `value` matches feature
+/// 014's `documents.language` values (`en`/`cyr`) plus the `unset`
+/// sentinel meaning `language is null`, never a new vocabulary.
+pub struct LanguageFacetOption {
+    pub value: &'static str,
+    pub label: &'static str,
+    pub count: i64,
+    pub checked: bool,
+}
+
+/// A single removable chip above the results — `remove_href` is a
+/// pre-built `/documents?...` URL with just this one filter dropped,
+/// computed in the handler (see `build_documents_url`) since Askama has
+/// no query-string-building filter of its own.
+pub struct AppliedFilterChip {
+    pub label: String,
+    pub remove_href: String,
+}
+
+/// One row in the "My collections" panel (feature 016) — `count` is the
+/// live number of documents currently matching this collection's saved
+/// filters, recomputed on every render (TDR 016 §3), never a snapshot
+/// frozen at save time.
+pub struct CollectionOption {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub href: String,
+    pub count: i64,
+}
+
 #[derive(askama::Template, askama_web::WebTemplate)]
 #[template(path = "documents_list.html")]
 pub struct DocumentsListTemplate {
@@ -94,6 +150,26 @@ pub struct DocumentsListTemplate {
     pub sort: &'static str,
     pub deleted: bool,
     pub documents: Vec<DocumentListItem>,
+    pub tag_facets: Vec<TagFacetOption>,
+    pub year_facets: Vec<YearFacetOption>,
+    pub undated_count: i64,
+    pub undated_checked: bool,
+    pub language_facets: Vec<LanguageFacetOption>,
+    pub applied_filters: Vec<AppliedFilterChip>,
+    /// `None` when no facet is active — the template uses this both to
+    /// decide whether to render "Clear all" and to pick between the
+    /// true first-run empty state and the filtered-to-zero one (AC-8).
+    pub clear_filters_href: Option<String>,
+    pub collections: Vec<CollectionOption>,
+    /// Whether *any* filter — a facet or the free-text search box — is
+    /// active, gating the "Save this search" control (feature 016 AC-3).
+    /// Broader than `clear_filters_href.is_some()`, which only tracks
+    /// facets, not `q`.
+    pub can_save_search: bool,
+    /// The query string (no leading `/documents?`) to embed as the
+    /// "Save this search" form's hidden `query` field — the exact state
+    /// a saved collection will bookmark.
+    pub save_search_query: String,
 }
 
 #[derive(askama::Template, askama_web::WebTemplate)]
@@ -104,6 +180,7 @@ pub struct DocumentShowTemplate {
     pub nav_avatar_url: Option<String>,
     pub saved: bool,
     pub uploaded: bool,
+    pub reprocessing: bool,
     pub id: uuid::Uuid,
     pub title: String,
     pub original_filename: String,
@@ -122,6 +199,10 @@ pub struct DocumentShowTemplate {
     pub uploaded_at: String,
     pub ocr_status: String,
     pub ocr_text: Option<String>,
+    /// `""`/`"en"`/`"cyr"` — matches the `<select>`'s option values
+    /// directly (see TDR 014), so the template can compare with `==`
+    /// rather than needing an `Option` + extra branch.
+    pub language: String,
 }
 
 #[derive(askama::Template, askama_web::WebTemplate)]

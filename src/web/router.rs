@@ -36,6 +36,18 @@ pub fn app(state: AppState, session_layer: SessionManagerLayer<PostgresStore>) -
         )
         .route("/documents/new", get(handlers::documents::new_form))
         .route(
+            "/documents/collections",
+            post(handlers::documents::save_collection),
+        )
+        .route(
+            "/documents/collections/:id/delete",
+            post(handlers::documents::delete_collection),
+        )
+        .route(
+            "/documents/collections/:id/rename",
+            post(handlers::documents::rename_collection),
+        )
+        .route(
             "/documents/:id",
             get(handlers::documents::show).post(handlers::documents::update),
         )
@@ -46,6 +58,10 @@ pub fn app(state: AppState, session_layer: SessionManagerLayer<PostgresStore>) -
         .route(
             "/documents/:id/accept_suggested_date",
             post(handlers::documents::accept_suggested_date),
+        )
+        .route(
+            "/documents/:id/reprocess_ocr",
+            post(handlers::documents::reprocess_ocr),
         )
         .route("/scan", get(handlers::scan::new_scan))
         .route(

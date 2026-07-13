@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "delete from smart_collections where id = $1 and tenant_id = $2 returning id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "09440a8e56f163c87516c0e2db1e61cd79d47f1a212b105b2272f5d0dea3dd34"
+}

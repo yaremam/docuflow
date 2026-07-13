@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at\n                   from documents\n                   where tenant_id = $1 and ($2::text[] is null or tags && $2)\n                   order by date_issued asc nulls last",
+  "query": "select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at\n                   from documents\n                   where tenant_id = $1\n                     and ($2::text[] is null or tags && $2)\n                     and (cardinality($3::text[]) = 0 or tags @> $3)\n                     and (($4::int4 is null and $6 = false)\n                          or ($4::int4 is not null and extract(year from date_issued)::int4 = $4\n                              and ($5::int4 is null or extract(month from date_issued)::int4 = $5))\n                          or ($6 and date_issued is null))\n                     and ((cardinality($7::text[]) = 0 and $8 = false)\n                          or (language = any($7))\n                          or ($8 and language is null))\n                   order by date_issued asc nulls last",
   "describe": {
     "columns": [
       {
@@ -52,7 +52,13 @@
     "parameters": {
       "Left": [
         "Uuid",
-        "TextArray"
+        "TextArray",
+        "TextArray",
+        "Int4",
+        "Int4",
+        "Bool",
+        "TextArray",
+        "Bool"
       ]
     },
     "nullable": [
@@ -67,5 +73,5 @@
       false
     ]
   },
-  "hash": "d452a4f4aaa12b3ca6670a4b870ca370d28d1d0f6320b4c2d6039cae216561d0"
+  "hash": "62480b9c6b1ce4986770f426daf7f18fe4d661ebdaf96770d5eb072156328e62"
 }

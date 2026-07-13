@@ -57,7 +57,10 @@ page, just one reached without a session cookie (see §3/§4 below).
 | Sessions | `tower-sessions` + `tower-sessions-sqlx-store` | Postgres-backed server-side sessions; self-migrates its own table |
 | Auth | `argon2` | password hashing only — no OAuth/SSO yet |
 | Blob storage | `aws-sdk-s3` against LocalStack (dev) / real S3 (prod) | same code path both ways, chosen via env vars only |
-| OCR | `tesseract` CLI via `tokio::process::Command`, always `-l eng+rus` | shelled out, not an FFI crate — `tesseract-ocr` + `tesseract-ocr-rus` apt packages in `Dockerfile`'s runtime stage, zero new Cargo dependency; multi-language mode recognizes Cyrillic text without a document-language field — see TDR 011 |
+| OCR | `tesseract` CLI via `tokio::process::Command`, always `-l eng+rus` | shelled out, not an FFI crate — `tesseract-ocr` + `tesseract-ocr-rus` apt packages in `Dockerfile`'s runtime stage, zero new Cargo dependency; multi-language mode recognizes Cyrillic-script text with no per-document language selection needed to run OCR itself — see TDR 011 |
+| Language detection | `whatlang` crate, script-level for the Cyrillic bucket / language-level for English | pure Rust, no system dependency; populates `documents.language` from `ocr_text` — see TDR 014 |
+| Repeated query params | `axum-extra`'s `Query` (backed by `serde_html_form`), only on `/documents`'s facet params | `axum::extract::Query` (`serde_urlencoded`) can't collect `tags=a&tags=b` into a `Vec<String>` — see TDR 015 §3; every other route keeps the standard `axum::extract::Query`. Feature 016 also depends on `serde_html_form` directly (pinned to the same version) to parse a saved collection's stored query string the same way. |
+| EXIF reading | `kamadak-exif` crate, `DateTimeOriginal`/`DateTime` tags only | pure Rust EXIF reader; feeds `ocr_suggested_date_issued` as a fallback when OCR text has no recognizable date — see TDR 019 |
 | PDF rasterization | `pdftoppm` (`poppler-utils`) CLI via `tokio::process::Command` | same "shell out, don't link" precedent as `tesseract`; rasterizes each page to a PNG, then each page goes through the existing image-OCR path — see TDR 010 |
 | QR codes | `qrcode` crate, `svg` feature only | pure Rust, no system dependency; renders inline `<svg>` colored via `var(--ink)`/`var(--paper-raised)` so it follows the page's theme |
 | Mail | `lettre` over SMTP | Mailpit in dev, real relay in prod, selected by `SMTP_INSECURE` |
@@ -84,6 +87,9 @@ flowchart LR
         domain["domain.rs<br/>TenantId, UserId, DocumentId"]
         blob["blob.rs<br/>BlobStore: streaming multipart<br/>upload, get_object, presigned GET"]
         ocr["ocr.rs<br/>extract(content_type, bytes): dispatch entry point<br/>rasterizes PDFs via pdftoppm first, then shells out to tesseract"]
+        date_extract["date_extract.rs<br/>extract_issued_date(text): OCR-text date mining"]
+        exif_extract["exif_extract.rs<br/>extract_issued_date(bytes): EXIF capture-date<br/>fallback, only used when date_extract finds nothing"]
+        language_detect["language_detect.rs<br/>detect(text): OCR-text language recognition"]
         mailer["mailer.rs<br/>Mailer: reset-link emails"]
         telemetry["telemetry.rs<br/>OTel/Jaeger bootstrap"]
         error_root["error.rs<br/>AppError (boot-time)"]
@@ -99,6 +105,9 @@ flowchart LR
     handlers --> blob
     handlers --> mailer
     handlers -.->|detached tokio::spawn| ocr
+    handlers -.->|inline, after ocr::extract,<br/>same span| date_extract
+    handlers -.->|inline, only when date_extract<br/>finds nothing, same span| exif_extract
+    handlers -.->|inline, after ocr::extract,<br/>same span| language_detect
     state --> blob
     state --> mailer
 ```
@@ -118,6 +127,23 @@ flowchart LR
   (Alternatives G/H/I).
 - **`nav.rs`** centralizes the avatar-lookup-and-presign logic so every
   template struct across five+ handlers doesn't reimplement it.
+- **`handlers::documents::list`** (feature 015) also computes the smart
+  filters panel's facet options alongside the main, facet-aware,
+  per-sort-mode `query_as!` calls. Each facet option's *candidate set*
+  (which tags/years exist at all) stays the tenant's unfiltered full set,
+  but each option's displayed *count* is narrowed by whichever other
+  facets are currently active (feature 018) — one `count_documents` call
+  per candidate, with that facet's own dimension pinned to just that one
+  value (TDR 018 §3).
+- **`handlers::documents::{save_collection, delete_collection,
+  rename_collection}`** (features 016/017) round out the smart-filters
+  batch — a saved collection is just a named bookmark of a
+  `/documents?...` query string, applied by reusing `list`'s own parsing
+  (`ListQuery`, via `serde_html_form`) with no separate filter-matching
+  code. `count_documents` (extracted from feature 016's
+  `count_matching_documents` when feature 018 needed the same `WHERE`
+  clause for per-facet-option counts too) is the one shared "does this
+  document match this filter combination" query both features build on.
 - **`handlers/scan.rs`** (feature 009) is the one place a request reaches a
   document-creating handler *without* going through the `TenantContext`
   extractor — `GET /scan/:token` and `POST /scan/:token` sit in the public
@@ -135,6 +161,7 @@ flowchart LR
 erDiagram
     TENANTS ||--o{ USERS : "has"
     TENANTS ||--o{ DOCUMENTS : "scopes"
+    TENANTS ||--o{ SMART_COLLECTIONS : "scopes"
     USERS ||--o{ DOCUMENTS : "owns"
     USERS ||--o{ PASSWORD_RESET_TOKENS : "requests"
     USERS ||--o{ SCAN_SESSIONS : "requests"
@@ -182,6 +209,7 @@ erDiagram
         text ocr_status "pending|processing|done|failed|skipped"
         text ocr_text
         text ocr_error
+        text language "feature 014, nullable, en|cyr"
         timestamptz created_at
         timestamptz updated_at
     }
@@ -193,6 +221,13 @@ erDiagram
         text status "pending|captured"
         uuid document_id FK "nullable until captured"
         timestamptz expires_at
+        timestamptz created_at
+    }
+    SMART_COLLECTIONS {
+        uuid id PK
+        uuid tenant_id FK
+        text name
+        text query "feature 016, raw /documents query string"
         timestamptz created_at
     }
 ```
@@ -230,6 +265,13 @@ Notes:
   `document_id`" as an invariant violation (`AppWebError::
   InconsistentScanSession`) rather than something that can legitimately
   happen.
+- `smart_collections.query` (feature 016) stores the raw `/documents`
+  query string a saved collection bookmarks — deliberately not decomposed
+  into structured `tags`/`date_year`/`lang`/... columns, so it reuses
+  `list`'s existing parsing/validation with no second representation of
+  "what a filter is" to keep in sync (see TDR 016 §2). A collection's
+  displayed document count is always computed live against this stored
+  query at render time, never cached on the row.
 - A session table also lives in this database, but it's owned and
   self-migrated by `tower-sessions-sqlx-store` (`PostgresStore::migrate()`)
   — it has no entry under `migrations/` and no corresponding Rust struct.
@@ -318,6 +360,13 @@ first.
 
 | Feature | TDR | Chosen approach | Why (one line) |
 |---|---|---|---|
+| EXIF-based issued-date suggestion | [019](tdr/019_exif_issued_date_suggestion_design.md) | `kamadak-exif` reads `DateTimeOriginal`/`DateTime`, used only as a fallback when OCR text has no recognizable date; reuses the existing `ocr_suggested_date_issued` column/UI as-is, no new schema | A photo's capture date is a weaker signal than a date printed on the document, so OCR wins when both exist; reusing feature 012's column/UI keeps this additive rather than a parallel suggestion mechanism (TDR 019 §1) |
+| Narrowed smart-filter facet counts | [018](tdr/018_narrowed_facet_counts_design.md) | Each facet option's count is its own `count_documents` call with that facet's own dimension pinned to one candidate and every other active facet left as-is; candidate sets (which tags/years exist) stay unfiltered | Closes the gap TDR 015 §2 named and deferred; accepted ~15-20 small queries per page load over a more complex batched query, given personal-scale document counts (TDR 018 §2) |
+| Rename a saved smart collection | [017](tdr/017_rename_saved_collection_design.md) | `POST /documents/collections/:id/rename` updates only `name`, reusing `CollectionName`'s validation; no confirmation step, matching `delete_collection`'s precedent | Removes the friction delete-and-re-save had (losing `created_at`/list position, having to reconstruct the query by hand) |
+| Saved smart collections | [016](tdr/016_saved_smart_collections_design.md) | New `smart_collections` table stores the raw `/documents` query string, not structured columns; applying one is a plain link reusing `list`'s existing parsing; delete has no confirmation step (unlike document deletion) | A collection is exactly "a bookmarked URL" — zero new filter-matching logic, automatically forward-compatible with future facets; deletion here is trivially reversible (re-save), so matching document-deletion's confirm-page friction would be over-cautious (TDR 016 §2) |
+| Smart filters panel | [015](tdr/015_smart_filters_panel_design.md) | Extended `list`'s existing per-sort-mode `query_as!` arms with tag/date/language `WHERE` conditions (AND-within-tags, single-active-year-plus-undated for dates, OR-within-language); 4 separate, tenant-full-set facet-count queries; `axum-extra`'s `Query` for the repeated `tags=`/`lang=` params | Keeps compile-time query verification rather than a dynamic query builder; accepts not-narrowed-by-other-facets counts as a v1 simplification instead of an N-extra-query true implementation (TDR 015 §2) |
+| Document language field | [014](tdr/014_document_language_design.md) | `whatlang`-based detection over `ocr_text`, script-level for the Cyrillic bucket (any Cyrillic-script text) and language-level for English; written into a new `documents.language` column guarded `coalesce(language, ...)` so it never overwrites a manual edit | Matches what the shared `eng+rus` OCR trained-data actually produces per bucket; script-level detection for Cyrillic sidesteps needing a specific-language test fixture this project can't produce (see TDR 014 §2) |
+| Reprocess OCR | [013](tdr/013_reprocess_ocr_design.md) | Per-document `POST /documents/{id}/reprocess_ocr`: a guarded `UPDATE ... returning` flips a non-in-flight document back to `pending` and re-spawns the existing `run_ocr` | Reuses the exact OCR pipeline/instrumentation with no new PII surface; one button and endpoint covers both "redo the OCR" (a pipeline improvement) and a plain failure retry |
 | OCR-based issued-date suggestion | [012](tdr/012_ocr_issued_date_suggestion_design.md) | Regex-based scan of `ocr_text` for ISO/month-name/numeric date shapes; stored in its own `ocr_suggested_date_issued` column, surfaced as an explicit-accept "Use this date" action | Keeps "what OCR found" and "what the user confirmed" strictly separate — a wrong guess never lands in `date_issued` silently |
 | Cyrillic OCR support | [011](tdr/011_cyrillic_ocr_design.md) | Always run `tesseract -l eng+rus` (multi-language mode), no document-language field | Tesseract's multi-language mode already picks the right script per block internally; no detection step or per-document metadata needed |
 | PDF OCR | [010](tdr/010_pdf_ocr_design.md) | Shell out to `pdftoppm` (poppler-utils) to rasterize each page, then run the existing `tesseract` image-OCR path per page | Stays consistent with the `tesseract` precedent (CLI tool over native-library binding); avoids a second, inconsistent way of vendoring a native PDF dependency |
@@ -334,30 +383,49 @@ first.
 
 Explicitly scoped out of what's built so far, to avoid being mistaken for
 gaps:
-- **OCR retry** — a document stuck at `ocr_status = 'failed'` (or reset to
-  `'pending'` by the boot-time stuck-`'processing'` sweep) has no
-  automatic or manual retry path yet.
+- **Automatic / bulk OCR retry and reprocessing** — feature 013 added a
+  per-document manual "Reprocess OCR" button (`document_show.html`'s
+  "Extracted text" card), covering both a retry after `ocr_status =
+  'failed'` and "redo the OCR" for a document that predates a pipeline
+  improvement (feature 010's PDF support, 011's Cyrillic support, 012's
+  issued-date suggestion) — see TDR 013. Nothing re-queues a document
+  automatically (on boot, on a schedule, or when a new OCR feature ships),
+  and there's no bulk "reprocess all eligible documents" action — a user
+  has to click the button once per document.
 - **Multi-page / batch scan capture** — feature 009's phone-camera scan
   handoff produces exactly one document per QR code; scanning a multi-page
   document means repeating the flow per page.
 - **Multi-user tenants** (invite flow, membership roles) — schema/types
   already distinguish `TenantId`/`UserId` in anticipation, but no UI or
   membership table exists.
-- **Retroactive OCR reprocessing** — documents OCR'd (or skipped) before a
-  pipeline improvement ships — feature 010's PDF support, feature 011's
-  Cyrillic support, feature 012's issued-date suggestion — keep whatever
-  `ocr_status`/`ocr_text`/`ocr_suggested_date_issued` they already have;
-  they are not automatically re-queued through the improved pipeline.
-  This is the "redo the OCR" backlog item, and folds into the OCR retry
-  item above once that exists.
-- **Document-language field / language auto-detection** — feature 011
-  always runs `tesseract -l eng+rus` unconditionally rather than knowing
-  or asking a document's language; a compulsory language metadata field
-  with automatic recognition is a separate, not-yet-built backlog item.
-- **EXIF-based issued-date suggestion** — feature 012 only mines OCR
-  text; suggesting a date from an image's EXIF metadata is a separately-
-  tracked backlog item with its own data source and design.
+- **Proper Ukrainian/Serbian language support** — feature 014's
+  `documents.language` is a generic English/Cyrillic-script bucket, not
+  per-language values; Ukrainian and Serbian-Cyrillic text lands in the
+  same `cyr` bucket as everything else, with OCR quality still limited by
+  the shared `rus` trained-data pack (missing Ukrainian-only letters like
+  і/ї/є/ґ), and Serbian's common Latin-script form doesn't match either
+  bucket. Dedicated trained-data packs and distinct field values are a
+  separate, not-yet-built backlog item.
 - **Non-English month names in date extraction** — feature 012's
   `date_extract.rs` recognizes English month names and numeric/ISO
   shapes only, even though feature 011 added Cyrillic OCR; Cyrillic (or
-  other non-English) month names are not yet recognized.
+  other non-English) month names are not yet recognized. Feature 019's
+  EXIF fallback doesn't help here either — it's a capture timestamp, not
+  text parsing.
+- **The date-issued facet still supports only one active year (optionally
+  + one month) at a time**, not several simultaneously — unaffected by
+  feature 018's count-narrowing work, which only changed what number is
+  displayed next to each option, not how many date ranges can be active
+  together (see TDR 015 §3, TDR 018 AC-5).
+- **Batching the ~15-20 per-facet-option count queries feature 018 added
+  into fewer round trips** — deliberately deferred as a possible future
+  optimization if personal-scale query volume ever becomes a real
+  latency complaint (TDR 018 §2 Alternative B).
+- **Reordering or sharing saved smart collections** — feature 017 added
+  in-place renaming, but ordering is always newest-first and a collection
+  is never visible to another tenant/user (see
+  `docs/backlog/017_rename_saved_collection.md` §3).
+- **Distinguishing a suggested date's source in the UI** (OCR text vs.
+  EXIF capture date) — feature 019 reuses feature 012's single
+  suggestion box/column as-is; the user sees one suggestion either way,
+  never which of the two sources produced it (TDR 019 §2 Alternative B).

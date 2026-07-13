@@ -1,17 +1,25 @@
 use axum::extract::{Form, Multipart, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
+/// `axum::extract::Query` (backed by `serde_urlencoded`) can't collect
+/// repeated same-named params (`tags=a&tags=b`) into a `Vec<String>` field
+/// — it only ever sees the last occurrence. `list`'s facet params need
+/// exactly that, so it alone uses `axum-extra`'s `Query` (backed by
+/// `serde_html_form`), which supports it; every other handler in this
+/// file keeps the standard extractor.
+use axum_extra::extract::Query as MultiQuery;
 use serde::Deserialize;
 use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::web::error::AppWebError;
-use crate::web::forms::{DateIssuedField, ProfileField, Tags};
+use crate::web::forms::{CollectionName, DateIssuedField, Language, ProfileField, Tags};
 use crate::web::nav;
 use crate::web::state::AppState;
 use crate::web::tenancy::TenantContext;
 use crate::web::templates::{
-    DocumentDeleteTemplate, DocumentListItem, DocumentNewTemplate, DocumentShowTemplate, DocumentsListTemplate,
+    AppliedFilterChip, CollectionOption, DocumentDeleteTemplate, DocumentListItem, DocumentNewTemplate,
+    DocumentShowTemplate, DocumentsListTemplate, LanguageFacetOption, MonthFacetOption, TagFacetOption, YearFacetOption,
 };
 
 /// Also used by the router to size its `DefaultBodyLimit` layer — kept as
@@ -123,40 +131,236 @@ struct DocumentListRow {
     created_at: time::OffsetDateTime,
 }
 
-#[derive(Debug, Deserialize)]
+/// `Default` lets a saved collection's stored query string (feature 016)
+/// fail safe to "no filter" rather than panicking if it's ever malformed
+/// (shouldn't happen — `save_collection` validates with this same type —
+/// but zero-panic per CLAUDE.md means this path can't `.unwrap()`).
+#[derive(Debug, Deserialize, Default)]
 pub struct ListQuery {
     #[serde(default)]
     q: String,
     sort: Option<String>,
     #[serde(default)]
     deleted: bool,
+    /// Smart-filters tag facet (feature 015) — AND-narrowing, independent
+    /// of `q`'s OR-search (see TDR 015 §3).
+    #[serde(default)]
+    tags: Vec<String>,
+    date_year: Option<i32>,
+    /// Only respected when `date_year` is also set (TDR 015 §3).
+    date_month: Option<i32>,
+    #[serde(default)]
+    undated: bool,
+    /// `"en"` / `"cyr"` / `"unset"` — OR-combined within this facet.
+    #[serde(default)]
+    lang: Vec<String>,
 }
 
-#[tracing::instrument(skip(state, tenancy))]
+const MONTH_NAMES: [&str; 12] =
+    ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+fn month_name(month: i32) -> &'static str {
+    MONTH_NAMES.get((month - 1).max(0) as usize).copied().unwrap_or("")
+}
+
+fn url_encode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(byte as char),
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// Builds the query-string portion (no leading `/documents?`) from a full
+/// set of filter state — shared by `build_documents_url` below and by
+/// `list`'s "Save this search" hidden field (feature 016), so a saved
+/// collection's stored `query` is byte-for-byte the same shape as any
+/// other filter link this page produces.
+#[allow(clippy::too_many_arguments)]
+fn build_query_string(
+    q: &str,
+    sort: &str,
+    tags: &[String],
+    date_year: Option<i32>,
+    date_month: Option<i32>,
+    undated: bool,
+    lang: &[String],
+) -> String {
+    let mut params: Vec<(&str, String)> = Vec::new();
+    if !q.is_empty() {
+        params.push(("q", q.to_string()));
+    }
+    params.push(("sort", sort.to_string()));
+    for tag in tags {
+        params.push(("tags", tag.clone()));
+    }
+    if let Some(year) = date_year {
+        params.push(("date_year", year.to_string()));
+    }
+    if let Some(month) = date_month {
+        params.push(("date_month", month.to_string()));
+    }
+    if undated {
+        params.push(("undated", "true".to_string()));
+    }
+    for value in lang {
+        params.push(("lang", value.clone()));
+    }
+
+    params.iter().map(|(key, value)| format!("{key}={}", url_encode(value))).collect::<Vec<_>>().join("&")
+}
+
+/// Builds a full `/documents?...` URL from a full set of filter state —
+/// shared by the applied-filter chips' individual "remove this one" links
+/// and "Clear all", so both stay in sync with the query params `list`
+/// itself parses (see TDR 015 §3).
+#[allow(clippy::too_many_arguments)]
+fn build_documents_url(
+    q: &str,
+    sort: &str,
+    tags: &[String],
+    date_year: Option<i32>,
+    date_month: Option<i32>,
+    undated: bool,
+    lang: &[String],
+) -> String {
+    let query_string = build_query_string(q, sort, tags, date_year, date_month, undated, lang);
+    if query_string.is_empty() {
+        "/documents".to_string()
+    } else {
+        format!("/documents?{query_string}")
+    }
+}
+
+/// Whether a parsed `ListQuery` has any real filter active — a facet or
+/// non-empty free-text search. Shared by `list` (gating the "Save this
+/// search" control) and `save_collection` (rejecting a no-op save server-
+/// side, not just hiding the UI control — see TDR 016 AC-4).
+fn query_has_active_filters(filters: &ListQuery) -> bool {
+    !filters.tags.is_empty()
+        || filters.date_year.is_some()
+        || filters.undated
+        || !filters.lang.is_empty()
+        || !filters.q.trim().is_empty()
+}
+
+/// Counts documents matching an arbitrary filter set — the same
+/// conditions `list`'s main query applies, minus any `ORDER BY` (a count
+/// needs no ordering). Used both for a saved collection's live count
+/// (feature 016) and could back a future "how many would this match"
+/// preview; kept as its own query rather than folded into `list`'s
+/// per-sort arms since it's needed once per collection, not once per
+/// page load.
+/// The raw eight-dimension `WHERE` clause shared by every "how many
+/// documents match this filter combination" question on `/documents` —
+/// a saved collection's full count (`count_matching_documents`) and,
+/// since feature 018, each individual facet option's narrowed count
+/// (`list` calls this directly, once per candidate, with that facet's
+/// own dimension pinned to a single value and every other dimension left
+/// at whatever's currently active — see TDR 018 §3).
+#[allow(clippy::too_many_arguments)]
+async fn count_documents(
+    state: &AppState,
+    tenant_id: Uuid,
+    q_tags: Option<&[String]>,
+    facet_tags: &[String],
+    date_year: Option<i32>,
+    date_month: Option<i32>,
+    undated: bool,
+    lang_values: &[String],
+    lang_unset: bool,
+) -> Result<i64, AppWebError> {
+    let count = sqlx::query_scalar!(
+        "select count(*) from documents
+         where tenant_id = $1
+           and ($2::text[] is null or tags && $2)
+           and (cardinality($3::text[]) = 0 or tags @> $3)
+           and (($4::int4 is null and $6 = false)
+                or ($4::int4 is not null and extract(year from date_issued)::int4 = $4
+                    and ($5::int4 is null or extract(month from date_issued)::int4 = $5))
+                or ($6 and date_issued is null))
+           and ((cardinality($7::text[]) = 0 and $8 = false)
+                or (language = any($7))
+                or ($8 and language is null))",
+        tenant_id,
+        q_tags,
+        facet_tags,
+        date_year,
+        date_month,
+        undated,
+        lang_values,
+        lang_unset,
+    )
+    .fetch_one(&state.pool)
+    .await?
+    .unwrap_or(0);
+
+    Ok(count)
+}
+
+/// A collection's *complete* saved filter, all dimensions at once — not
+/// one facet option narrowed by the others (see `count_documents` and
+/// TDR 018 §1 for why those are different questions).
+async fn count_matching_documents(state: &AppState, tenant_id: Uuid, filters: &ListQuery) -> Result<i64, AppWebError> {
+    let tag_filter = parse_tag_search(&filters.q);
+    let date_year = filters.date_year;
+    let date_month = if date_year.is_some() { filters.date_month } else { None };
+    let lang_values: Vec<String> = filters.lang.iter().filter(|value| value.as_str() != "unset").cloned().collect();
+    let lang_unset = filters.lang.iter().any(|value| value == "unset");
+
+    count_documents(state, tenant_id, tag_filter.as_deref(), &filters.tags, date_year, date_month, filters.undated, &lang_values, lang_unset).await
+}
+
+#[tracing::instrument(skip(state, tenancy, query))]
 pub async fn list(
     tenancy: TenantContext,
     State(state): State<AppState>,
-    Query(query): Query<ListQuery>,
+    MultiQuery(query): MultiQuery<ListQuery>,
 ) -> Result<DocumentsListTemplate, AppWebError> {
     let nav_avatar_url = nav::avatar_url(&state.pool, &state.blob, tenancy.user_id.0).await?;
     let tag_filter = parse_tag_search(&query.q);
     let sort = Sort::parse(query.sort.as_deref());
 
+    let date_year = query.date_year;
+    let date_month = if date_year.is_some() { query.date_month } else { None };
+    let lang_values: Vec<String> = query.lang.iter().filter(|value| value.as_str() != "unset").cloned().collect();
+    let lang_unset = query.lang.iter().any(|value| value == "unset");
+
     // Each arm differs only in `ORDER BY` — sqlx's compile-time `query_as!`
     // macro can't parameterize that clause, so the small, fixed set of sort
     // modes is spelled out literally rather than building the SQL string at
     // runtime (which would forgo compile-time verification for every query
-    // on this page, not just the ordering).
+    // on this page, not just the ordering). The facet conditions ($3-$8)
+    // are identical across all five arms — see TDR 015 §3 for what each
+    // one means.
     let rows = match sort {
         Sort::CreatedAtDesc => {
             sqlx::query_as!(
                 DocumentListRow,
                 r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at
                    from documents
-                   where tenant_id = $1 and ($2::text[] is null or tags && $2)
+                   where tenant_id = $1
+                     and ($2::text[] is null or tags && $2)
+                     and (cardinality($3::text[]) = 0 or tags @> $3)
+                     and (($4::int4 is null and $6 = false)
+                          or ($4::int4 is not null and extract(year from date_issued)::int4 = $4
+                              and ($5::int4 is null or extract(month from date_issued)::int4 = $5))
+                          or ($6 and date_issued is null))
+                     and ((cardinality($7::text[]) = 0 and $8 = false)
+                          or (language = any($7))
+                          or ($8 and language is null))
                    order by created_at desc"#,
                 tenancy.tenant_id.0,
                 tag_filter.as_deref(),
+                query.tags.as_slice(),
+                date_year,
+                date_month,
+                query.undated,
+                lang_values.as_slice(),
+                lang_unset,
             )
             .fetch_all(&state.pool)
             .await?
@@ -166,10 +370,25 @@ pub async fn list(
                 DocumentListRow,
                 r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at
                    from documents
-                   where tenant_id = $1 and ($2::text[] is null or tags && $2)
+                   where tenant_id = $1
+                     and ($2::text[] is null or tags && $2)
+                     and (cardinality($3::text[]) = 0 or tags @> $3)
+                     and (($4::int4 is null and $6 = false)
+                          or ($4::int4 is not null and extract(year from date_issued)::int4 = $4
+                              and ($5::int4 is null or extract(month from date_issued)::int4 = $5))
+                          or ($6 and date_issued is null))
+                     and ((cardinality($7::text[]) = 0 and $8 = false)
+                          or (language = any($7))
+                          or ($8 and language is null))
                    order by created_at asc"#,
                 tenancy.tenant_id.0,
                 tag_filter.as_deref(),
+                query.tags.as_slice(),
+                date_year,
+                date_month,
+                query.undated,
+                lang_values.as_slice(),
+                lang_unset,
             )
             .fetch_all(&state.pool)
             .await?
@@ -179,10 +398,25 @@ pub async fn list(
                 DocumentListRow,
                 r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at
                    from documents
-                   where tenant_id = $1 and ($2::text[] is null or tags && $2)
+                   where tenant_id = $1
+                     and ($2::text[] is null or tags && $2)
+                     and (cardinality($3::text[]) = 0 or tags @> $3)
+                     and (($4::int4 is null and $6 = false)
+                          or ($4::int4 is not null and extract(year from date_issued)::int4 = $4
+                              and ($5::int4 is null or extract(month from date_issued)::int4 = $5))
+                          or ($6 and date_issued is null))
+                     and ((cardinality($7::text[]) = 0 and $8 = false)
+                          or (language = any($7))
+                          or ($8 and language is null))
                    order by date_issued desc nulls last"#,
                 tenancy.tenant_id.0,
                 tag_filter.as_deref(),
+                query.tags.as_slice(),
+                date_year,
+                date_month,
+                query.undated,
+                lang_values.as_slice(),
+                lang_unset,
             )
             .fetch_all(&state.pool)
             .await?
@@ -192,10 +426,25 @@ pub async fn list(
                 DocumentListRow,
                 r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at
                    from documents
-                   where tenant_id = $1 and ($2::text[] is null or tags && $2)
+                   where tenant_id = $1
+                     and ($2::text[] is null or tags && $2)
+                     and (cardinality($3::text[]) = 0 or tags @> $3)
+                     and (($4::int4 is null and $6 = false)
+                          or ($4::int4 is not null and extract(year from date_issued)::int4 = $4
+                              and ($5::int4 is null or extract(month from date_issued)::int4 = $5))
+                          or ($6 and date_issued is null))
+                     and ((cardinality($7::text[]) = 0 and $8 = false)
+                          or (language = any($7))
+                          or ($8 and language is null))
                    order by date_issued asc nulls last"#,
                 tenancy.tenant_id.0,
                 tag_filter.as_deref(),
+                query.tags.as_slice(),
+                date_year,
+                date_month,
+                query.undated,
+                lang_values.as_slice(),
+                lang_unset,
             )
             .fetch_all(&state.pool)
             .await?
@@ -205,10 +454,25 @@ pub async fn list(
                 DocumentListRow,
                 r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at
                    from documents
-                   where tenant_id = $1 and ($2::text[] is null or tags && $2)
+                   where tenant_id = $1
+                     and ($2::text[] is null or tags && $2)
+                     and (cardinality($3::text[]) = 0 or tags @> $3)
+                     and (($4::int4 is null and $6 = false)
+                          or ($4::int4 is not null and extract(year from date_issued)::int4 = $4
+                              and ($5::int4 is null or extract(month from date_issued)::int4 = $5))
+                          or ($6 and date_issued is null))
+                     and ((cardinality($7::text[]) = 0 and $8 = false)
+                          or (language = any($7))
+                          or ($8 and language is null))
                    order by array_to_string(tags, ',') asc"#,
                 tenancy.tenant_id.0,
                 tag_filter.as_deref(),
+                query.tags.as_slice(),
+                date_year,
+                date_month,
+                query.undated,
+                lang_values.as_slice(),
+                lang_unset,
             )
             .fetch_all(&state.pool)
             .await?
@@ -231,6 +495,157 @@ pub async fn list(
         });
     }
 
+    // The *candidate set* for each facet (which tags/years/months exist at
+    // all) stays the tenant's unfiltered full set — only each candidate's
+    // displayed *count*, fetched separately below via `count_documents`,
+    // narrows by whichever other facets are currently active (TDR 018 §3,
+    // AC-5). Language's candidate set is fixed (en/cyr/unset), so it needs
+    // no discovery query at all.
+    let tag_rows = sqlx::query!(
+        "select unnest(tags) as tag, count(*) as count from documents where tenant_id = $1 group by tag order by count(*) desc, tag limit 10",
+        tenancy.tenant_id.0,
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let mut tag_facets = Vec::with_capacity(tag_rows.len());
+    for row in tag_rows {
+        let name = row.tag.unwrap_or_default();
+        let checked = query.tags.iter().any(|tag| tag == &name);
+        let count = count_documents(
+            &state,
+            tenancy.tenant_id.0,
+            tag_filter.as_deref(),
+            std::slice::from_ref(&name),
+            date_year,
+            date_month,
+            query.undated,
+            &lang_values,
+            lang_unset,
+        )
+        .await?;
+        tag_facets.push(TagFacetOption { name, count, checked });
+    }
+
+    let year_rows = sqlx::query!(
+        "select extract(year from date_issued)::int4 as year, count(*) as count
+         from documents where tenant_id = $1 and date_issued is not null
+         group by year order by year desc",
+        tenancy.tenant_id.0,
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let month_rows = if let Some(year) = date_year {
+        sqlx::query!(
+            "select extract(month from date_issued)::int4 as month, count(*) as count
+             from documents where tenant_id = $1 and extract(year from date_issued)::int4 = $2
+             group by month order by month",
+            tenancy.tenant_id.0,
+            year,
+        )
+        .fetch_all(&state.pool)
+        .await?
+    } else {
+        Vec::new()
+    };
+    let mut year_facets = Vec::with_capacity(year_rows.len());
+    for row in year_rows {
+        let year = row.year.unwrap_or(0);
+        let checked = date_year == Some(year);
+        let count =
+            count_documents(&state, tenancy.tenant_id.0, tag_filter.as_deref(), &query.tags, Some(year), None, false, &lang_values, lang_unset).await?;
+        let months = if checked {
+            let mut month_facets = Vec::with_capacity(month_rows.len());
+            for month_row in &month_rows {
+                let month = month_row.month.unwrap_or(0);
+                let month_count =
+                    count_documents(&state, tenancy.tenant_id.0, tag_filter.as_deref(), &query.tags, Some(year), Some(month), false, &lang_values, lang_unset)
+                        .await?;
+                month_facets.push(MonthFacetOption {
+                    label: month_name(month),
+                    value: month.clamp(0, 12) as u8,
+                    count: month_count,
+                    checked: date_month == Some(month),
+                });
+            }
+            month_facets
+        } else {
+            Vec::new()
+        };
+        year_facets.push(YearFacetOption { year, count, checked, months });
+    }
+
+    let undated_count =
+        count_documents(&state, tenancy.tenant_id.0, tag_filter.as_deref(), &query.tags, None, None, true, &lang_values, lang_unset).await?;
+
+    let en_count =
+        count_documents(&state, tenancy.tenant_id.0, tag_filter.as_deref(), &query.tags, date_year, date_month, query.undated, &["en".to_string()], false)
+            .await?;
+    let cyr_count =
+        count_documents(&state, tenancy.tenant_id.0, tag_filter.as_deref(), &query.tags, date_year, date_month, query.undated, &["cyr".to_string()], false)
+            .await?;
+    let unset_count = count_documents(&state, tenancy.tenant_id.0, tag_filter.as_deref(), &query.tags, date_year, date_month, query.undated, &[], true).await?;
+    let language_facets = vec![
+        LanguageFacetOption { value: "en", label: "English", count: en_count, checked: lang_values.iter().any(|v| v == "en") },
+        LanguageFacetOption { value: "cyr", label: "Cyrillic", count: cyr_count, checked: lang_values.iter().any(|v| v == "cyr") },
+        LanguageFacetOption { value: "unset", label: "Not set", count: unset_count, checked: lang_unset },
+    ];
+
+    let mut applied_filters: Vec<AppliedFilterChip> = Vec::new();
+    for tag in &query.tags {
+        let remaining: Vec<String> = query.tags.iter().filter(|t| *t != tag).cloned().collect();
+        applied_filters.push(AppliedFilterChip {
+            label: tag.clone(),
+            remove_href: build_documents_url(&query.q, sort.as_str(), &remaining, date_year, date_month, query.undated, &query.lang),
+        });
+    }
+    if let Some(year) = date_year {
+        let label = match date_month {
+            Some(month) => format!("Issued {year}-{month:02}"),
+            None => format!("Issued {year}"),
+        };
+        applied_filters.push(AppliedFilterChip {
+            label,
+            remove_href: build_documents_url(&query.q, sort.as_str(), &query.tags, None, None, query.undated, &query.lang),
+        });
+    }
+    if query.undated {
+        applied_filters.push(AppliedFilterChip {
+            label: "Undated".to_string(),
+            remove_href: build_documents_url(&query.q, sort.as_str(), &query.tags, date_year, date_month, false, &query.lang),
+        });
+    }
+    for lang_value in &query.lang {
+        let remaining: Vec<String> = query.lang.iter().filter(|v| *v != lang_value).cloned().collect();
+        let label = match lang_value.as_str() {
+            "en" => "English",
+            "cyr" => "Cyrillic",
+            _ => "Not set",
+        };
+        applied_filters.push(AppliedFilterChip {
+            label: label.to_string(),
+            remove_href: build_documents_url(&query.q, sort.as_str(), &query.tags, date_year, date_month, query.undated, &remaining),
+        });
+    }
+
+    let filters_active = !query.tags.is_empty() || date_year.is_some() || query.undated || !query.lang.is_empty();
+    let clear_filters_href = filters_active.then(|| build_documents_url(&query.q, sort.as_str(), &[], None, None, false, &[]));
+
+    let collection_rows = sqlx::query!(
+        "select id, name, query, created_at from smart_collections where tenant_id = $1 order by created_at desc",
+        tenancy.tenant_id.0,
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let mut collections = Vec::with_capacity(collection_rows.len());
+    for row in collection_rows {
+        let filters: ListQuery = serde_html_form::from_str(&row.query).unwrap_or_default();
+        let count = count_matching_documents(&state, tenancy.tenant_id.0, &filters).await?;
+        collections.push(CollectionOption { id: row.id, name: row.name, href: format!("/documents?{}", row.query), count });
+    }
+
+    let can_save_search = query_has_active_filters(&query);
+    let save_search_query = build_query_string(&query.q, sort.as_str(), &query.tags, date_year, date_month, query.undated, &query.lang);
+
     Ok(DocumentsListTemplate {
         active_tab: "documents",
         authenticated: true,
@@ -239,6 +654,16 @@ pub async fn list(
         sort: sort.as_str(),
         deleted: query.deleted,
         documents,
+        tag_facets,
+        year_facets,
+        undated_count,
+        undated_checked: query.undated,
+        language_facets,
+        applied_filters,
+        clear_filters_href,
+        collections,
+        can_save_search,
+        save_search_query,
     })
 }
 
@@ -254,6 +679,7 @@ struct DocumentRow {
     ocr_suggested_date_issued: Option<time::Date>,
     ocr_status: String,
     ocr_text: Option<String>,
+    language: Option<String>,
     created_at: time::OffsetDateTime,
 }
 
@@ -263,6 +689,8 @@ pub struct ShowQuery {
     saved: bool,
     #[serde(default)]
     uploaded: bool,
+    #[serde(default)]
+    reprocessing: bool,
 }
 
 #[tracing::instrument(skip(state, tenancy))]
@@ -277,7 +705,7 @@ pub async fn show(
     let row = sqlx::query_as!(
         DocumentRow,
         r#"select id, title, original_filename, content_type, file_size_bytes, blob_key, tags, date_issued,
-                  ocr_suggested_date_issued, ocr_status, ocr_text, created_at
+                  ocr_suggested_date_issued, ocr_status, ocr_text, language, created_at
            from documents
            where id = $1 and tenant_id = $2"#,
         id,
@@ -300,6 +728,7 @@ pub async fn show(
         nav_avatar_url,
         saved: query.saved,
         uploaded: query.uploaded,
+        reprocessing: query.reprocessing,
         id: row.id,
         title: row.title.unwrap_or_else(|| row.original_filename.clone()),
         original_filename: row.original_filename,
@@ -313,6 +742,7 @@ pub async fn show(
         uploaded_at: format_date(row.created_at.date()),
         ocr_status: row.ocr_status,
         ocr_text: row.ocr_text,
+        language: row.language.unwrap_or_default(),
     })
 }
 
@@ -324,6 +754,8 @@ pub struct DocumentMetadataForm {
     pub tags: Tags,
     #[serde(default)]
     pub date_issued: DateIssuedField,
+    #[serde(default)]
+    pub language: Language,
 }
 
 #[tracing::instrument(skip(state, tenancy, form))]
@@ -334,13 +766,14 @@ pub async fn update(
     Form(form): Form<DocumentMetadataForm>,
 ) -> Result<Response, AppWebError> {
     let result = sqlx::query!(
-        "update documents set title = $3, tags = $4, date_issued = $5, updated_at = now()
+        "update documents set title = $3, tags = $4, date_issued = $5, language = $6, updated_at = now()
          where id = $1 and tenant_id = $2",
         id,
         tenancy.tenant_id.0,
         form.title.into_option(),
         &form.tags.into_vec(),
         form.date_issued.into_option(),
+        form.language.into_option(),
     )
     .execute(&state.pool)
     .await?;
@@ -394,6 +827,65 @@ pub async fn accept_suggested_date(
     }
 
     Ok(Redirect::to(&format!("/documents/{id}?saved=true")).into_response())
+}
+
+struct ReprocessRow {
+    blob_key: String,
+    content_type: String,
+}
+
+/// Re-runs the current OCR pipeline against a document's already-stored
+/// file — the "redo the OCR" action (see TDR 013), covering both a
+/// document that predates a pipeline improvement (e.g. a `skipped` PDF
+/// from before feature 010) and a plain retry after `ocr_status =
+/// 'failed'`. The guarded `update ... where ocr_status not in ('pending',
+/// 'processing') returning ...` both makes the "don't queue a second job
+/// on an in-flight document" guarantee (AC-4) and the state transition
+/// atomic in a single round-trip — same idiom `accept_suggested_date`
+/// above uses for its own guard. No row back means either the document
+/// doesn't exist for this tenant (404) or it's already `pending`/
+/// `processing` (no-op redirect); the existence check only runs as a
+/// fallback to tell those two apart, same as `accept_suggested_date`.
+#[tracing::instrument(skip(state, tenancy))]
+pub async fn reprocess_ocr(
+    tenancy: TenantContext,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, AppWebError> {
+    let row = sqlx::query_as!(
+        ReprocessRow,
+        "update documents set ocr_status = 'pending', updated_at = now()
+         where id = $1 and tenant_id = $2 and ocr_status not in ('pending', 'processing')
+         returning blob_key, content_type",
+        id,
+        tenancy.tenant_id.0,
+    )
+    .fetch_optional(&state.pool)
+    .await?;
+
+    let Some(row) = row else {
+        let exists = sqlx::query_scalar!(
+            "select exists(select 1 from documents where id = $1 and tenant_id = $2)",
+            id,
+            tenancy.tenant_id.0,
+        )
+        .fetch_one(&state.pool)
+        .await?
+        .unwrap_or(false);
+
+        if !exists {
+            return Err(AppWebError::NotFound);
+        }
+
+        return Ok(Redirect::to(&format!("/documents/{id}")).into_response());
+    };
+
+    let ocr_state = state.clone();
+    tokio::spawn(
+        run_ocr(ocr_state, id, tenancy.tenant_id.0, row.blob_key, row.content_type).instrument(tracing::Span::current()),
+    );
+
+    Ok(Redirect::to(&format!("/documents/{id}?reprocessing=true")).into_response())
 }
 
 struct DocumentSummaryRow {
@@ -515,21 +1007,31 @@ async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: 
         return;
     }
 
-    let outcome = match state.blob.get_object(&blob_key).await {
-        Ok(bytes) => crate::ocr::extract(&content_type, &bytes).await.map_err(|e| e.to_string()),
+    // Kept alongside `outcome` (not consumed inside the match that produces
+    // it) so a successful OCR pass can also fall back to an EXIF-sourced
+    // date suggestion (feature 019) without a second blob fetch.
+    let blob_bytes = state.blob.get_object(&blob_key).await;
+    let outcome = match &blob_bytes {
+        Ok(bytes) => crate::ocr::extract(&content_type, bytes).await.map_err(|e| e.to_string()),
         Err(error) => Err(error.to_string()),
     };
 
     let update_result = match outcome {
         Ok(text) => {
-            let suggested_date_issued = crate::date_extract::extract_issued_date(&text);
+            let ocr_suggested_date_issued = crate::date_extract::extract_issued_date(&text);
+            let exif_suggested_date_issued =
+                blob_bytes.as_ref().ok().and_then(|bytes| crate::exif_extract::extract_issued_date(bytes));
+            let suggested_date_issued = ocr_suggested_date_issued.or(exif_suggested_date_issued);
+            let language = crate::language_detect::detect(&text);
             sqlx::query!(
-                "update documents set ocr_status = 'done', ocr_text = $3, ocr_suggested_date_issued = $4
+                "update documents set ocr_status = 'done', ocr_text = $3, ocr_suggested_date_issued = $4,
+                        language = coalesce(language, $5)
                  where id = $1 and tenant_id = $2",
                 document_id,
                 tenant_id,
                 text,
                 suggested_date_issued,
+                language,
             )
             .execute(&state.pool)
             .await
@@ -718,4 +1220,93 @@ pub async fn create(
     .await?;
 
     Ok(Redirect::to(&format!("/documents/{document_id}?uploaded=true")).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SaveCollectionForm {
+    pub name: CollectionName,
+    #[serde(default)]
+    pub query: String,
+}
+
+/// Saves the current `/documents` filter state as a named collection
+/// (TDR 016). `form.query` is the exact query string `list` already
+/// builds for its own applied-filter chips (see `build_query_string`),
+/// submitted as a hidden field — this handler never re-derives filter
+/// state itself, only validates that the submitted state is a *real*
+/// filter (AC-4): a crafted request with an empty/no-op `query` is
+/// rejected server-side, not just hidden client-side by the "Save this
+/// search" control's own visibility rule.
+#[tracing::instrument(skip(state, tenancy, form))]
+pub async fn save_collection(
+    tenancy: TenantContext,
+    State(state): State<AppState>,
+    Form(form): Form<SaveCollectionForm>,
+) -> Result<Response, AppWebError> {
+    let filters: ListQuery = serde_html_form::from_str(&form.query).unwrap_or_default();
+    if !query_has_active_filters(&filters) {
+        return Ok(bad_request("cannot save a search with no active filter"));
+    }
+
+    let id = Uuid::new_v4();
+    sqlx::query!(
+        "insert into smart_collections (id, tenant_id, name, query) values ($1, $2, $3, $4)",
+        id,
+        tenancy.tenant_id.0,
+        form.name.as_str(),
+        form.query,
+    )
+    .execute(&state.pool)
+    .await?;
+
+    Ok(Redirect::to("/documents").into_response())
+}
+
+/// Tenant-scoped delete, no confirmation step — unlike document deletion,
+/// removing a saved collection touches nothing but a bookmark (TDR 016
+/// §2 Alternative C).
+#[tracing::instrument(skip(state, tenancy))]
+pub async fn delete_collection(
+    tenancy: TenantContext,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, AppWebError> {
+    sqlx::query!(
+        "delete from smart_collections where id = $1 and tenant_id = $2 returning id",
+        id,
+        tenancy.tenant_id.0,
+    )
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(AppWebError::NotFound)?;
+
+    Ok(Redirect::to("/documents").into_response())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RenameCollectionForm {
+    pub name: CollectionName,
+}
+
+/// Updates only `name` — `query`/`created_at` are untouched, so a rename
+/// never changes what a collection filters or its position in the
+/// newest-first list (TDR 017 AC-2).
+#[tracing::instrument(skip(state, tenancy, form))]
+pub async fn rename_collection(
+    tenancy: TenantContext,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Form(form): Form<RenameCollectionForm>,
+) -> Result<Response, AppWebError> {
+    sqlx::query!(
+        "update smart_collections set name = $3 where id = $1 and tenant_id = $2 returning id",
+        id,
+        tenancy.tenant_id.0,
+        form.name.as_str(),
+    )
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(AppWebError::NotFound)?;
+
+    Ok(Redirect::to("/documents").into_response())
 }

@@ -384,3 +384,69 @@ impl DateIssuedField {
     }
 }
 
+/// A document's language, closed to exactly the buckets `language_detect`
+/// can produce (see TDR 014) — `""` clears the field, mirroring
+/// `ProfileField`/`DateIssuedField`'s blank-means-clear convention. Rejects
+/// anything outside `{"", "en", "cyr"}` server-side, even though the
+/// `<select>` in `document_show.html` only ever offers this same closed
+/// set — per CLAUDE.md's "validate at boundaries" rule, a request doesn't
+/// have to come from that form.
+#[derive(Debug, Default, Clone, serde::Deserialize)]
+#[serde(try_from = "String")]
+pub struct Language(Option<String>);
+
+#[derive(Debug, thiserror::Error)]
+#[error("language must be blank, \"en\", or \"cyr\"")]
+pub struct LanguageError;
+
+impl TryFrom<String> for Language {
+    type Error = LanguageError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.trim() {
+            "" => Ok(Self(None)),
+            "en" => Ok(Self(Some("en".to_string()))),
+            "cyr" => Ok(Self(Some("cyr".to_string()))),
+            _ => Err(LanguageError),
+        }
+    }
+}
+
+impl Language {
+    pub fn into_option(self) -> Option<String> {
+        self.0
+    }
+}
+
+/// A saved smart collection's name (TDR 016) — unlike `ProfileField`,
+/// blank is rejected: a nameless collection would be useless in the "My
+/// collections" list.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(try_from = "String")]
+pub struct CollectionName(String);
+
+const COLLECTION_NAME_MAX_LEN: usize = 100;
+
+#[derive(Debug, thiserror::Error)]
+#[error("name must be between 1 and {COLLECTION_NAME_MAX_LEN} characters")]
+pub struct CollectionNameError;
+
+impl TryFrom<String> for CollectionName {
+    type Error = CollectionNameError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() || trimmed.len() > COLLECTION_NAME_MAX_LEN {
+            Err(CollectionNameError)
+        } else {
+            Ok(Self(trimmed.to_string()))
+        }
+    }
+}
+
+impl CollectionName {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+

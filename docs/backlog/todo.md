@@ -1,5 +1,5 @@
-- redo the OCR
-- extract and suggest issued date from image EXIF
-- add document language compulsory field to metadata and try to recognize automatically
-- add smart filters panel to the /documents page similar to gmail or adobe lightroom smart collections (hierarchy by date issued, by tags, by language)
+- proper language selection from all world languages not just English and Cyrrylic (not even a language)
+- properly support Ukrainian and Serbian: dedicated OCR trained-data packs (extends feature 011's eng+rus pattern) plus distinct language-field values, instead of the generic English/Cyrillic-script bucketing feature 014 ships with (raised 2026-07-13, deliberately deferred out of 014)
 - implement proper password reset
+- improve OCR quality - results are shit
+- batch feature 018's per-facet-option count queries into fewer round trips if page-load latency ever becomes a real complaint (deliberately deferred out of 018, see TDR 018 §2 Alternative B)

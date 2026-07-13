@@ -1,0 +1,369 @@
+mod common;
+
+async fn user_id(app: &common::TestApp, email: &str) -> uuid::Uuid {
+    sqlx::query_scalar!("select id from users where email = $1", email)
+        .fetch_one(&app.state.pool)
+        .await
+        .unwrap()
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn seed_document(
+    pool: &sqlx::PgPool,
+    user_id: uuid::Uuid,
+    filename: &str,
+    tags: &[&str],
+    date_issued: Option<time::Date>,
+    language: Option<&str>,
+) -> uuid::Uuid {
+    let id = uuid::Uuid::new_v4();
+    let tags: Vec<String> = tags.iter().map(|tag| tag.to_string()).collect();
+    let blob_key = format!("documents/{user_id}/{id}");
+    sqlx::query!(
+        "insert into documents
+            (id, tenant_id, user_id, original_filename, content_type, file_size_bytes, blob_key, tags, date_issued, ocr_status, language)
+         values ($1, $2, $2, $3, 'application/pdf', 100, $4, $5, $6, 'done', $7)",
+        id,
+        user_id,
+        filename,
+        blob_key,
+        &tags,
+        date_issued,
+        language,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    id
+}
+
+fn date(year: i32, month: u8, day: u8) -> time::Date {
+    time::Date::from_calendar_date(year, time::Month::try_from(month).unwrap(), day).unwrap()
+}
+
+/// Finds the `filter-count` value immediately following a given facet
+/// option's label — robust to exact template whitespace, unlike a raw
+/// substring match, and reusable across the tags/date/language facets
+/// since they all share the same `filter-option-label`/`filter-count`
+/// markup shape.
+fn facet_count_after_label(body: &str, label: &str) -> Option<String> {
+    let label_marker = format!("filter-option-label\">{label}</span>");
+    let after_label = &body[body.find(&label_marker)? + label_marker.len()..];
+    let count_marker = "filter-count\">";
+    let after_count_open = &after_label[after_label.find(count_marker)? + count_marker.len()..];
+    let end = after_count_open.find('<')?;
+    Some(after_count_open[..end].to_string())
+}
+
+#[tokio::test]
+async fn tag_facet_narrows_to_documents_with_all_selected_tags() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "tagfacet.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "tagfacet.docs@example.com").await;
+
+    seed_document(&app.state.pool, user, "both_tags.pdf", &["insurance", "medical"], None, None).await;
+    seed_document(&app.state.pool, user, "one_tag.pdf", &["insurance"], None, None).await;
+
+    let response = common::get_with_cookie(&app, "/documents?tags=insurance&tags=medical", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("both_tags.pdf"), "expected a document with both selected tags, got: {body}");
+    assert!(!body.contains("one_tag.pdf"), "a document missing one of the selected tags should be excluded, got: {body}");
+}
+
+#[tokio::test]
+async fn tag_facet_is_independent_of_the_free_text_search_box() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "tagfacetq.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "tagfacetq.docs@example.com").await;
+
+    seed_document(&app.state.pool, user, "matches_both.pdf", &["insurance", "auto"], None, None).await;
+    seed_document(&app.state.pool, user, "matches_facet_only.pdf", &["insurance"], None, None).await;
+    seed_document(&app.state.pool, user, "matches_q_only.pdf", &["auto"], None, None).await;
+
+    // q is an OR-search for "auto"; the tags facet is an AND-narrow for "insurance" —
+    // the two conditions AND together.
+    let response = common::get_with_cookie(&app, "/documents?q=auto&tags=insurance", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("matches_both.pdf"), "expected the doc matching both conditions, got: {body}");
+    assert!(!body.contains("matches_facet_only.pdf"), "q=auto should still exclude docs that don't match it, got: {body}");
+    assert!(!body.contains("matches_q_only.pdf"), "tags=insurance should still exclude docs that don't have it, got: {body}");
+}
+
+#[tokio::test]
+async fn language_facet_filters_by_selected_language() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "langfacet.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "langfacet.docs@example.com").await;
+
+    seed_document(&app.state.pool, user, "english.pdf", &["bill"], None, Some("en")).await;
+    seed_document(&app.state.pool, user, "cyrillic.pdf", &["bill"], None, Some("cyr")).await;
+
+    let response = common::get_with_cookie(&app, "/documents?lang=en", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("english.pdf"));
+    assert!(!body.contains("cyrillic.pdf"));
+}
+
+#[tokio::test]
+async fn language_facet_unset_option_filters_to_documents_without_a_language() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "langunset.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "langunset.docs@example.com").await;
+
+    seed_document(&app.state.pool, user, "english.pdf", &["bill"], None, Some("en")).await;
+    seed_document(&app.state.pool, user, "no_language.pdf", &["bill"], None, None).await;
+
+    let response = common::get_with_cookie(&app, "/documents?lang=unset", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("no_language.pdf"));
+    assert!(!body.contains("english.pdf"));
+}
+
+#[tokio::test]
+async fn language_facet_ors_multiple_selected_values() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "langor.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "langor.docs@example.com").await;
+
+    seed_document(&app.state.pool, user, "english.pdf", &["bill"], None, Some("en")).await;
+    seed_document(&app.state.pool, user, "cyrillic.pdf", &["bill"], None, Some("cyr")).await;
+    seed_document(&app.state.pool, user, "unset_lang.pdf", &["bill"], None, None).await;
+
+    let response = common::get_with_cookie(&app, "/documents?lang=en&lang=cyr", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("english.pdf"));
+    assert!(body.contains("cyrillic.pdf"));
+    assert!(!body.contains("unset_lang.pdf"));
+}
+
+#[tokio::test]
+async fn date_year_facet_filters_to_documents_issued_in_that_year() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "dateyear.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "dateyear.docs@example.com").await;
+
+    seed_document(&app.state.pool, user, "in_2026.pdf", &["bill"], Some(date(2026, 3, 14)), None).await;
+    seed_document(&app.state.pool, user, "in_2025.pdf", &["bill"], Some(date(2025, 6, 1)), None).await;
+
+    let response = common::get_with_cookie(&app, "/documents?date_year=2026", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("in_2026.pdf"));
+    assert!(!body.contains("in_2025.pdf"));
+}
+
+#[tokio::test]
+async fn date_year_and_month_facet_narrows_further() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "datemonth.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "datemonth.docs@example.com").await;
+
+    seed_document(&app.state.pool, user, "march.pdf", &["bill"], Some(date(2026, 3, 14)), None).await;
+    seed_document(&app.state.pool, user, "july.pdf", &["bill"], Some(date(2026, 7, 2)), None).await;
+
+    let response = common::get_with_cookie(&app, "/documents?date_year=2026&date_month=3", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("march.pdf"));
+    assert!(!body.contains("july.pdf"));
+}
+
+#[tokio::test]
+async fn undated_facet_filters_to_documents_without_a_date_issued() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "undated.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "undated.docs@example.com").await;
+
+    seed_document(&app.state.pool, user, "has_date.pdf", &["bill"], Some(date(2026, 3, 14)), None).await;
+    seed_document(&app.state.pool, user, "no_date.pdf", &["bill"], None, None).await;
+
+    let response = common::get_with_cookie(&app, "/documents?undated=true", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("no_date.pdf"));
+    assert!(!body.contains("has_date.pdf"));
+}
+
+#[tokio::test]
+async fn undated_ors_with_an_active_year_selection() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "undatedor.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "undatedor.docs@example.com").await;
+
+    seed_document(&app.state.pool, user, "in_2026.pdf", &["bill"], Some(date(2026, 3, 14)), None).await;
+    seed_document(&app.state.pool, user, "no_date.pdf", &["bill"], None, None).await;
+    seed_document(&app.state.pool, user, "in_2025.pdf", &["bill"], Some(date(2025, 1, 1)), None).await;
+
+    let response = common::get_with_cookie(&app, "/documents?date_year=2026&undated=true", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("in_2026.pdf"));
+    assert!(body.contains("no_date.pdf"));
+    assert!(!body.contains("in_2025.pdf"));
+}
+
+#[tokio::test]
+async fn facets_combine_with_each_other_and_with_search_and_sort() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "combo.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "combo.docs@example.com").await;
+
+    seed_document(&app.state.pool, user, "matches_all.pdf", &["insurance"], Some(date(2026, 3, 14)), Some("en")).await;
+    seed_document(&app.state.pool, user, "wrong_language.pdf", &["insurance"], Some(date(2026, 3, 14)), Some("cyr")).await;
+    seed_document(&app.state.pool, user, "wrong_year.pdf", &["insurance"], Some(date(2025, 3, 14)), Some("en")).await;
+
+    let response = common::get_with_cookie(&app, "/documents?tags=insurance&date_year=2026&lang=en&sort=date_issued_desc", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("matches_all.pdf"));
+    assert!(!body.contains("wrong_language.pdf"));
+    assert!(!body.contains("wrong_year.pdf"));
+}
+
+#[tokio::test]
+async fn default_view_with_no_facet_params_matches_pre_015_behavior() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "nofacet.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "nofacet.docs@example.com").await;
+
+    seed_document(&app.state.pool, user, "any_doc.pdf", &["insurance"], Some(date(2026, 3, 14)), Some("en")).await;
+
+    let response = common::get_with_cookie(&app, "/documents", &cookie).await;
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = common::body_string(response).await;
+    assert!(body.contains("any_doc.pdf"), "with no facet params, every document should still show, got: {body}");
+}
+
+#[tokio::test]
+async fn filters_panel_shows_tag_counts() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "tagcounts.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "tagcounts.docs@example.com").await;
+
+    seed_document(&app.state.pool, user, "a.pdf", &["insurance"], None, None).await;
+    seed_document(&app.state.pool, user, "b.pdf", &["insurance"], None, None).await;
+    seed_document(&app.state.pool, user, "c.pdf", &["utilities"], None, None).await;
+
+    let response = common::get_with_cookie(&app, "/documents", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(
+        body.contains(r#"value="insurance""#) && body.contains("insurance") && body.contains(">2<"),
+        "expected a tag facet option for insurance with a count of 2, got: {body}"
+    );
+}
+
+#[tokio::test]
+async fn active_filters_render_as_removable_chips() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "chips.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "chips.docs@example.com").await;
+
+    seed_document(&app.state.pool, user, "a.pdf", &["insurance"], None, Some("en")).await;
+
+    let response = common::get_with_cookie(&app, "/documents?tags=insurance&lang=en", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("filter-chip"), "expected at least one applied-filter chip, got: {body}");
+    // Removing the "insurance" tag chip should link to a URL that keeps the language filter
+    // but drops the tag.
+    assert!(
+        body.contains("lang=en") && !body.contains("tags=insurance&amp;lang=en\" class=\"filter-chip\""),
+        "expected the tag's own removal link not to include itself, got: {body}"
+    );
+}
+
+#[tokio::test]
+async fn zero_results_from_filters_shows_a_distinct_empty_state() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "zerofilter.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "zerofilter.docs@example.com").await;
+
+    seed_document(&app.state.pool, user, "a.pdf", &["insurance"], None, None).await;
+
+    let response = common::get_with_cookie(&app, "/documents?tags=nonexistent-tag", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(
+        body.contains("No documents match these filters"),
+        "expected the filtered-to-zero empty state, got: {body}"
+    );
+    assert!(!body.contains("No documents yet"), "the true first-run empty state should not show when filters are just narrow, got: {body}");
+}
+
+#[tokio::test]
+async fn tag_facet_counts_narrow_when_a_language_filter_is_active() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "tagcountnarrow.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "tagcountnarrow.docs@example.com").await;
+
+    seed_document(&app.state.pool, user, "en_insurance.pdf", &["insurance"], None, Some("en")).await;
+    seed_document(&app.state.pool, user, "cyr_insurance.pdf", &["insurance"], None, Some("cyr")).await;
+    seed_document(&app.state.pool, user, "en_utilities.pdf", &["utilities"], None, Some("en")).await;
+
+    let unfiltered = common::get_with_cookie(&app, "/documents", &cookie).await;
+    let unfiltered_body = common::body_string(unfiltered).await;
+    assert_eq!(facet_count_after_label(&unfiltered_body, "insurance").as_deref(), Some("2"), "unfiltered: both insurance docs count, got: {unfiltered_body}");
+
+    let filtered = common::get_with_cookie(&app, "/documents?lang=en", &cookie).await;
+    let filtered_body = common::body_string(filtered).await;
+    assert_eq!(
+        facet_count_after_label(&filtered_body, "insurance").as_deref(),
+        Some("1"),
+        "with lang=en active, only the English insurance doc should count, got: {filtered_body}"
+    );
+}
+
+#[tokio::test]
+async fn language_facet_counts_narrow_when_a_tag_filter_is_active() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "langcountnarrow.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "langcountnarrow.docs@example.com").await;
+
+    seed_document(&app.state.pool, user, "en_insurance.pdf", &["insurance"], None, Some("en")).await;
+    seed_document(&app.state.pool, user, "en_utilities.pdf", &["utilities"], None, Some("en")).await;
+    seed_document(&app.state.pool, user, "cyr_insurance.pdf", &["insurance"], None, Some("cyr")).await;
+
+    let unfiltered = common::get_with_cookie(&app, "/documents", &cookie).await;
+    let unfiltered_body = common::body_string(unfiltered).await;
+    assert_eq!(facet_count_after_label(&unfiltered_body, "English").as_deref(), Some("2"), "unfiltered: both English docs count, got: {unfiltered_body}");
+
+    let filtered = common::get_with_cookie(&app, "/documents?tags=insurance", &cookie).await;
+    let filtered_body = common::body_string(filtered).await;
+    assert_eq!(
+        facet_count_after_label(&filtered_body, "English").as_deref(),
+        Some("1"),
+        "with tags=insurance active, only the English insurance doc should count, got: {filtered_body}"
+    );
+}
+
+#[tokio::test]
+async fn date_facet_counts_narrow_when_a_tag_filter_is_active() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "datecountnarrow.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "datecountnarrow.docs@example.com").await;
+
+    seed_document(&app.state.pool, user, "insurance_2026.pdf", &["insurance"], Some(date(2026, 3, 1)), None).await;
+    seed_document(&app.state.pool, user, "utilities_2026.pdf", &["utilities"], Some(date(2026, 5, 1)), None).await;
+
+    let unfiltered = common::get_with_cookie(&app, "/documents", &cookie).await;
+    let unfiltered_body = common::body_string(unfiltered).await;
+    assert_eq!(facet_count_after_label(&unfiltered_body, "2026").as_deref(), Some("2"), "unfiltered: both 2026 docs count, got: {unfiltered_body}");
+
+    let filtered = common::get_with_cookie(&app, "/documents?tags=insurance", &cookie).await;
+    let filtered_body = common::body_string(filtered).await;
+    assert_eq!(
+        facet_count_after_label(&filtered_body, "2026").as_deref(),
+        Some("1"),
+        "with tags=insurance active, only the insurance 2026 doc should count, got: {filtered_body}"
+    );
+}

@@ -13,6 +13,8 @@
   <a class="breadcrumb" href="/documents">&larr; Back to documents</a>
   {% if uploaded %}
   <p class="form-success">Uploaded &mdash; extracting text now.</p>
+  {% else if reprocessing %}
+  <p class="form-success">Reprocessing &mdash; extracting text now.</p>
   {% else if saved %}
   <p class="form-success">Saved.</p>
   {% endif %}
@@ -40,6 +42,27 @@
         {% else %}
         <div class="detail-text-box">Still processing&hellip; check back shortly.</div>
         {% endif %}
+        {% if ocr_status == "pending" || ocr_status == "processing" %}
+        <div class="ocr-actions">
+          <span class="ocr-status-pill is-active"><span class="dot"></span>Extracting text&hellip;</span>
+        </div>
+        {% else %}
+        <div class="ocr-actions">
+          {% if ocr_status == "failed" %}
+          <span class="ocr-status-pill is-failed"><span class="dot"></span>Last attempt failed</span>
+          {% endif %}
+          <p class="ocr-actions-copy">
+            {% if ocr_status == "skipped" %}
+            This file type wasn't supported when it was uploaded. Reprocessing runs it through OCR now.
+            {% else %}
+            Runs text extraction again with the current engine. Replaces the text and date suggestion above.
+            {% endif %}
+          </p>
+          <form method="post" action="/documents/{{ id }}/reprocess_ocr">
+            <button class="btn btn-outline" type="submit">Reprocess OCR</button>
+          </form>
+        </div>
+        {% endif %}
       </div>
     </div>
     <div class="detail-meta">
@@ -66,6 +89,17 @@
                 <button class="btn-suggestion" type="submit">Use this date</button>
               </form>
             </div>
+            {% endif %}
+          </div>
+          <div class="field">
+            <label for="language">Language</label>
+            <select id="language" name="language">
+              <option value=""{% if language == "" %} selected{% endif %}>Not set</option>
+              <option value="en"{% if language == "en" %} selected{% endif %}>English</option>
+              <option value="cyr"{% if language == "cyr" %} selected{% endif %}>Cyrillic</option>
+            </select>
+            {% if language.is_empty() %}
+            <p class="field-hint">Not detected yet &mdash; pick one, or leave blank.</p>
             {% endif %}
           </div>
           <button class="btn btn-stamp" type="submit">Save changes</button>

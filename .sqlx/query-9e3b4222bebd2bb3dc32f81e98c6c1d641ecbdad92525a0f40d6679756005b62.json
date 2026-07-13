@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select unnest(tags) as tag, count(*) as count from documents where tenant_id = $1 group by tag order by count(*) desc, tag limit 10",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "tag",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "9e3b4222bebd2bb3dc32f81e98c6c1d641ecbdad92525a0f40d6679756005b62"
+}
