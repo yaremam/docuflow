@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select name, query, created_at from smart_collections where id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "query",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "7c5a56f6981690a6b357c3ca0d8f5e90f1466ceb78c1416d437c0ff8783b496c"
+}
