@@ -251,17 +251,35 @@ pub struct ScanNewTemplate {
     pub qr_svg: String,
 }
 
-/// The three mutually-exclusive states `scan_phone.html` can render. A
-/// `bool` pair (`valid`/`captured`) would allow four combinations when only
-/// three are ever meaningful — this makes the illegal one unrepresentable
-/// instead of just unexercised.
+/// The mutually-exclusive states `scan_phone.html` can render — an enum for
+/// the same illegal-states-unrepresentable reason as feature 009's original
+/// three-variant version; feature 022 added `Capturing` and gave the two
+/// page-carrying variants their counts.
 pub enum ScanPhoneState {
-    /// Just uploaded — confirmation screen.
-    Captured,
-    /// Still-pending, unexpired token — show the capture form.
+    /// Finalized — one document created from the session's pages. The count
+    /// is 0 only for sessions captured before feature 022 existed (no
+    /// `scan_pages` rows) — the template shows the count only when > 0.
+    Captured(i64),
+    /// Unexpired token, no pages yet — show the first capture form.
     Capture,
-    /// Unknown, expired, or already-used token.
+    /// ≥1 page uploaded, not finished — the capture-next / finish decision
+    /// screen, with the running page count (feature 022).
+    Capturing(i64),
+    /// Unknown, expired, or already-finalized-and-gone token.
     Invalid,
+}
+
+/// The desktop `GET /scan` page once the phone has started capturing
+/// (feature 022): the QR is deliberately gone — spent, and hiding it stops
+/// a second device joining mid-session — replaced by a live page count on
+/// the same meta-refresh poll.
+#[derive(askama::Template, askama_web::WebTemplate)]
+#[template(path = "scan_progress.html")]
+pub struct ScanProgressTemplate {
+    pub active_tab: &'static str,
+    pub authenticated: bool,
+    pub nav_avatar_url: Option<String>,
+    pub page_count: i64,
 }
 
 /// The phone side of the scan handoff — public, unauthenticated (the phone

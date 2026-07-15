@@ -7,5 +7,6 @@ pub mod language_detect;
 pub mod languages;
 pub mod mailer;
 pub mod ocr;
+pub mod pdf_assemble;
 pub mod telemetry;
 pub mod web;

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select count(*) from scan_pages p\n         join scan_sessions s on s.id = p.scan_session_id\n         where s.token_hash = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "37c248cb0d433f636c1923b574ab9271346a552cf8661bc49e123d91fcb4c266"
+}

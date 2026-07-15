@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}Scan with phone — DocuFlow{% endblock %}
+
+{% block head %}
+<meta http-equiv="refresh" content="5">
+{% endblock %}
+
+{% block content %}
+<div class="documents-page">
+  <a class="breadcrumb" href="/documents">&larr; Back to documents</a>
+  <div class="form-page">
+    {# The QR code is deliberately gone here — it's served its purpose, and
+       hiding it prevents a second device joining mid-session (TDR 022 §3). #}
+    <div class="card" data-tab="Scan with phone">
+      <h2>Scan a document with your phone</h2>
+      <p class="card-sub">Keep going on the phone &mdash; pages appear here as they arrive.</p>
+      <div class="qr-status"><span class="pulse-dot"></span>{{ page_count }} page{% if page_count != 1 %}s{% endif %} received &mdash; still scanning&hellip;</div>
+      <div class="page-ledger centered" aria-label="{{ page_count }} pages received">
+        {% for i in 0..page_count %}
+        <span class="page-square">{{ i + 1 }}</span>
+        {% endfor %}
+        <span class="page-count">tap Finish on the phone when done</span>
+      </div>
+      <p class="expiry-note">This page refreshes automatically &mdash; you'll be taken to the document when the phone finishes.</p>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select id, tenant_id, user_id from scan_sessions\n         where token_hash = $1 and status = 'pending' and expires_at > now()",
+  "query": "select id, tenant_id, user_id from scan_sessions\n         where token_hash = $1 and status in ('pending', 'capturing') and expires_at > now()",
   "describe": {
     "columns": [
       {
@@ -30,5 +30,5 @@
       false
     ]
   },
-  "hash": "5e1e6c1ca47fb46fa7e35627f9576f6eaac809dd548fcb8919179e4005d72666"
+  "hash": "ae5a92845ea46a257f14077ab1994b09b757b4190c6de24fd06e960f45763e20"
 }

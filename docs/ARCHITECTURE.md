@@ -167,6 +167,7 @@ erDiagram
     USERS ||--o{ PASSWORD_RESET_TOKENS : "requests"
     USERS ||--o{ SCAN_SESSIONS : "requests"
     DOCUMENTS |o--o| SCAN_SESSIONS : "created by"
+    SCAN_SESSIONS ||--o{ SCAN_PAGES : "accumulates (feature 022)"
 
     TENANTS {
         uuid id PK
@@ -219,9 +220,18 @@ erDiagram
         uuid tenant_id FK
         uuid user_id FK
         text token_hash UK
-        text status "pending|captured"
+        text status "pending|capturing|captured (capturing: feature 022)"
         uuid document_id FK "nullable until captured"
-        timestamptz expires_at
+        timestamptz expires_at "slides +10min per captured page (feature 022)"
+        timestamptz created_at
+    }
+    SCAN_PAGES {
+        uuid id PK
+        uuid scan_session_id FK
+        int page_number "unique per session, capture order"
+        text blob_key "page blob; deleted best-effort on finalize"
+        text content_type
+        bigint file_size_bytes
         timestamptz created_at
     }
     SMART_COLLECTIONS {
@@ -392,6 +402,7 @@ first.
 
 | Feature | TDR | Chosen approach | Why (one line) |
 |---|---|---|---|
+| Multi-page phone scan | [022](tdr/022_multipage_scan_design.md) | One scan session accumulates pages (`scan_pages` + `'capturing'` status, sliding 10-min expiry per page); `POST /scan/:token/finish` assembles them into one PDF via pure-Rust `lopdf`+`image` (`src/pdf_assemble.rs`, JPEG passthrough, page box at 72/150ths of pixels) and pushes it through the existing ingest path | N photos must become *one* archive entry, and a PDF makes feature 010's per-page OCR work unchanged; pure-Rust assembly follows the `qrcode` no-system-dependency precedent over dragging Python (`img2pdf`) into the image (TDR 022 §2) |
 | Nightly image shipping (GHCR pipeline + self-host deploy) | [021](tdr/021_nightly_image_shipping_design.md) | GitHub Actions nightly: full `cargo check`/`cargo test` gate, then push `ghcr.io/yaremam/docuflow` (`nightly` / `nightly-YYYY-MM-DD` / `sha-*`, amd64 only), skipping via the published image's revision label; telemetry made opt-in (`OTLP_ENDPOINT` unset → stdout `fmt` logs only); `deploy/docker-compose.yml` is the user-facing artifact | An image tag existing must *imply* its commit passed the suite (CLAUDE.md's CI rule as machinery), and "absence of config" is what a fresh pull runs with — so absence has to be the safe telemetry mode (TDR 021 §2-3) |
 | General language support (German/Dutch/Ukrainian OCR, full-world tagging) | [020](tdr/020_general_language_support_design.md) | `documents.language` opened to any ISO 639-1 code (validated via `isolang`, not a CHECK enum); OCR pack set widened to `eng+deu+nld+ukr` (Russian pack retired); detection stays restricted to those 4 codes | Field flexibility and OCR-pack coverage are separable concerns — "any language" tagging doesn't require OCR to be tuned for all of them (TDR 020 §2-3) |
 | EXIF-based issued-date suggestion | [019](tdr/019_exif_issued_date_suggestion_design.md) | `kamadak-exif` reads `DateTimeOriginal`/`DateTime`, used only as a fallback when OCR text has no recognizable date; reuses the existing `ocr_suggested_date_issued` column/UI as-is, no new schema | A photo's capture date is a weaker signal than a date printed on the document, so OCR wins when both exist; reusing feature 012's column/UI keeps this additive rather than a parallel suggestion mechanism (TDR 019 §1) |
@@ -426,9 +437,13 @@ gaps:
   automatically (on boot, on a schedule, or when a new OCR feature ships),
   and there's no bulk "reprocess all eligible documents" action — a user
   has to click the button once per document.
-- **Multi-page / batch scan capture** — feature 009's phone-camera scan
-  handoff produces exactly one document per QR code; scanning a multi-page
-  document means repeating the flow per page.
+- **Reordering, retaking, or deleting individual pages of a phone scan** —
+  feature 022 made one QR session accumulate N pages into one PDF
+  document, but pages land strictly in capture order: a botched page means
+  finish-and-delete-the-document or abandon and rescan (backlog 022 §3).
+  Abandoned sessions' page blobs also have no cleanup sweep — finalize
+  deletes its pages best-effort; expired-session leftovers are accepted
+  personal-scale orphans.
 - **Multi-user tenants** (invite flow, membership roles) — schema/types
   already distinguish `TenantId`/`UserId` in anticipation, but no UI or
   membership table exists.

@@ -1203,6 +1203,51 @@ a { color: inherit; }
 .phone-status-icon.error { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
 .phone-status-icon svg { width: 28px; height: 28px; }
 
+/* Page ledger (feature 022, multi-page scan): one stamped square per
+   captured page, on both the phone decision screen and the desktop
+   progress card — mockup-approved 2026-07-15. */
+.page-ledger {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0 0 1.1rem;
+  padding: 0.55rem 0.7rem;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.page-ledger .page-square {
+  width: 22px;
+  height: 28px;
+  border-radius: 2px;
+  border: 1px solid var(--stamp);
+  background: color-mix(in srgb, var(--stamp) 14%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Fira Mono', monospace;
+  font-size: 0.62rem;
+  color: var(--stamp);
+}
+.page-ledger .page-square.ghost {
+  border: 1px dashed var(--line);
+  background: transparent;
+  color: var(--slate);
+}
+.page-ledger .page-count {
+  margin-left: auto;
+  font-family: 'Fira Mono', monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--slate);
+}
+.page-ledger.centered { justify-content: center; margin-top: 1.1rem; }
+.page-ledger.centered .page-count { margin-left: 0.4rem; }
+/* the phone card's two stacked forms (capture-next, then finish) */
+.card form + form { margin-top: 0.6rem; }
+
 .site-footer {
   padding: 1.4rem 1.25rem;
   font-size: 0.76rem;

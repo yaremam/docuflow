@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select (extract(epoch from (expires_at - now())) / 60)::float8 from scan_sessions where token_hash = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "float8",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "11546857e810a45961639977502851bcbd8731703251d0387d6384fd3268dda9"
+}

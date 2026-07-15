@@ -113,6 +113,13 @@ pub fn app(state: AppState, session_layer: SessionManagerLayer<PostgresStore>) -
                     handlers::documents::MAX_DOCUMENT_BYTES,
                 )),
         )
+        .route(
+            // Also public/tokened, like its capture sibling above —
+            // finalizes the session's pages into one PDF document
+            // (feature 022).
+            "/scan/:token/finish",
+            post(handlers::scan::finish_scan),
+        )
         .merge(protected)
         .layer(TraceLayer::new_for_http())
         .layer(session_layer)

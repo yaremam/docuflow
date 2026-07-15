@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select content_type, blob_key from documents where id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "content_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "blob_key",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "7a287a1146d6ec38dba155dd0989188a3197fe14c68b874f5e72a4e18f0b7496"
+}

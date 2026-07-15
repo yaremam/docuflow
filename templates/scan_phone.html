@@ -6,12 +6,16 @@
 <div class="documents-page">
   <div class="form-page">
     {% match state %}
-    {% when ScanPhoneState::Captured %}
+    {% when ScanPhoneState::Captured with (page_count) %}
     <div class="card phone-center-card" data-tab="DocuFlow scan">
       <div class="phone-status-icon success">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6"></path></svg>
       </div>
+      {% if page_count > &0 %}
+      <h2>Document created &mdash; {{ page_count }} page{% if page_count != &1 %}s{% endif %}</h2>
+      {% else %}
       <h2>Scan received</h2>
+      {% endif %}
       <p class="card-sub">It's on its way into your DocuFlow account &mdash; check your desktop, or close this tab.</p>
     </div>
     {% when ScanPhoneState::Capture %}
@@ -20,11 +24,36 @@
       <p class="card-sub">This will be added to your DocuFlow account. No login needed on this device.</p>
       <form method="post" action="/scan/{{ token }}" enctype="multipart/form-data">
         <div class="field">
-          <label for="photo">Photo</label>
+          <label for="photo">Photo &mdash; page 1</label>
           <input id="photo" name="photo" type="file" accept="image/*" capture="environment" required>
-          <span class="field-hint">Lay the document flat, good light, one page.</span>
+          <span class="field-hint">Lay the document flat, good light, one page per photo.</span>
         </div>
-        <button class="btn btn-stamp" type="submit">Upload photo</button>
+        <button class="btn btn-stamp" type="submit">Upload page 1</button>
+      </form>
+    </div>
+    {% when ScanPhoneState::Capturing with (page_count) %}
+    <div class="card" data-tab="DocuFlow scan">
+      <h2>Page {{ page_count }} added</h2>
+      <p class="card-sub">{{ page_count }} page{% if page_count != &1 %}s{% endif %} so far. Add the next page, or finish to create the document.</p>
+      <div class="page-ledger" aria-label="{{ page_count }} pages captured">
+        {% for i in 0..*page_count %}
+        <span class="page-square">{{ i + 1 }}</span>
+        {% endfor %}
+        <span class="page-square ghost">{{ page_count + 1 }}?</span>
+        <span class="page-count">{{ page_count }} page{% if page_count != &1 %}s{% endif %}</span>
+      </div>
+      {# Two sibling forms, deliberately never nested — see the nested-form
+         incident notes: a form inside a form silently breaks everything
+         rendered after it in real browsers. #}
+      <form method="post" action="/scan/{{ token }}" enctype="multipart/form-data">
+        <div class="field">
+          <label for="photo">Photo &mdash; page {{ page_count + 1 }}</label>
+          <input id="photo" name="photo" type="file" accept="image/*" capture="environment" required>
+        </div>
+        <button class="btn btn-stamp" type="submit">Upload page {{ page_count + 1 }}</button>
+      </form>
+      <form method="post" action="/scan/{{ token }}/finish">
+        <button class="btn btn-outline" type="submit">Finish &mdash; create document ({{ page_count }} page{% if page_count != &1 %}s{% endif %})</button>
       </form>
     </div>
     {% when ScanPhoneState::Invalid %}
@@ -33,7 +62,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5"></path><path d="M12 16h.01"></path></svg>
       </div>
       <h2>This code isn't valid anymore</h2>
-      <p class="card-sub">Scan codes are one-time and expire after 10 minutes. Go back to your desktop and start a new scan.</p>
+      <p class="card-sub">Scan codes are one-time and expire 10 minutes after the last page. Go back to your desktop and start a new scan.</p>
     </div>
     {% endmatch %}
   </div>

@@ -273,6 +273,25 @@ impl BlobStore {
         Ok(bytes.to_vec())
     }
 
+    /// Uploads an already-in-memory buffer in one `put_object` call — the
+    /// counterpart to `get_object` above, and deliberately not a streaming
+    /// path: used by feature 022's scan finalize for a server-assembled PDF
+    /// whose size is already bounded by the per-page upload caps that
+    /// `stream_upload` enforced when the pages came in.
+    pub async fn upload_bytes(&self, key: &str, content_type: &str, bytes: Vec<u8>) -> Result<usize, BlobError> {
+        let len = bytes.len();
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .content_type(content_type)
+            .body(ByteStream::from(bytes))
+            .send()
+            .await
+            .map_err(s3_err)?;
+        Ok(len)
+    }
+
     /// Deletes an object outright. Used when a document row is deleted — the
     /// DB row is removed first (tenant-scoped, so ownership is checked
     /// there), and this is only called once that's already confirmed to

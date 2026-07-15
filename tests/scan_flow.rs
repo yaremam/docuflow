@@ -125,7 +125,10 @@ async fn get_scan_phone_with_expired_token_shows_invalid_state() {
 }
 
 #[tokio::test]
-async fn post_scan_phone_with_valid_image_creates_document_and_marks_session_captured() {
+async fn post_scan_phone_with_valid_image_appends_a_page_and_marks_session_capturing() {
+    // Feature 022 deliberately changed 009's one-shot semantics: a photo
+    // POST appends a page instead of creating a document — the document
+    // only exists once the phone finishes (covered in scan_multipage.rs).
     let app = common::test_state().await;
     let user = signed_up_user(&app, "scan.phone.capture@example.com").await;
     let token = seed_scan_session(&app, &user, 10).await;
@@ -143,23 +146,23 @@ async fn post_scan_phone_with_valid_image_creates_document_and_marks_session_cap
 
     assert_eq!(response.status(), axum::http::StatusCode::OK);
     let body = common::body_string(response).await.to_lowercase();
-    assert!(body.contains("received") || body.contains("close"));
+    assert!(body.contains("page 1 added"));
 
     let session = find_scan_session_by_token(&app, &token).await.expect("session should still exist");
-    assert_eq!(session.status, "captured");
-    let document_id = session.document_id.expect("captured session should record a document id");
+    assert_eq!(session.status, "capturing");
+    assert!(session.document_id.is_none(), "no document until the phone finishes");
 
-    let doc = sqlx::query!(
-        "select tenant_id, user_id, original_filename, ocr_status from documents where id = $1",
-        document_id,
+    let hash = ScanToken::from(token.clone()).hash();
+    let page_count = sqlx::query_scalar!(
+        "select count(*) from scan_pages p
+         join scan_sessions s on s.id = p.scan_session_id
+         where s.token_hash = $1",
+        hash,
     )
     .fetch_one(&app.state.pool)
     .await
     .unwrap();
-    assert_eq!(doc.tenant_id, user.tenant_id);
-    assert_eq!(doc.user_id, user.user_id);
-    assert_eq!(doc.original_filename, "capture.jpg");
-    assert!(doc.ocr_status == "pending" || doc.ocr_status == "processing" || doc.ocr_status == "done");
+    assert_eq!(page_count, Some(1));
 }
 
 #[tokio::test]
@@ -209,33 +212,30 @@ async fn post_scan_phone_with_expired_token_is_rejected() {
 
 #[tokio::test]
 async fn post_scan_phone_with_already_captured_token_is_rejected() {
+    // "Captured" now means *finalized* (feature 022) — a second photo on a
+    // still-open session is legal (it's page 2), but a finalized session
+    // stays one-time like 009's.
     let app = common::test_state().await;
     let user = signed_up_user(&app, "scan.phone.reused@example.com").await;
     let token = seed_scan_session(&app, &user, 10).await;
 
-    let first = common::post_multipart_with_cookie(
-        &app,
-        &format!("/scan/{token}"),
-        "",
-        "photo",
-        "first.jpg",
-        "image/jpeg",
-        b"first capture",
-    )
-    .await;
-    assert_eq!(first.status(), axum::http::StatusCode::OK);
+    let hash = ScanToken::from(token.clone()).hash();
+    sqlx::query!("update scan_sessions set status = 'captured' where token_hash = $1", hash)
+        .execute(&app.state.pool)
+        .await
+        .unwrap();
 
-    let second = common::post_multipart_with_cookie(
+    let response = common::post_multipart_with_cookie(
         &app,
         &format!("/scan/{token}"),
         "",
         "photo",
-        "second.jpg",
+        "late.jpg",
         "image/jpeg",
-        b"second capture",
+        b"too late",
     )
     .await;
-    assert_eq!(second.status(), axum::http::StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -244,6 +244,8 @@ async fn get_scan_redirects_to_the_document_once_captured() {
     let user = signed_up_user(&app, "scan.desktop.followup@example.com").await;
     let token = seed_scan_session(&app, &user, 10).await;
 
+    // Real image bytes: finishing assembles the pages into a PDF, so unlike
+    // the append-only tests above this one can't use placeholder bytes.
     common::post_multipart_with_cookie(
         &app,
         &format!("/scan/{token}"),
@@ -251,9 +253,10 @@ async fn get_scan_redirects_to_the_document_once_captured() {
         "photo",
         "capture.jpg",
         "image/jpeg",
-        b"pretend this is jpeg bytes",
+        include_bytes!("fixtures/dated_sample_with_exif.jpg"),
     )
     .await;
+    common::post_form(&app, &format!("/scan/{token}/finish"), "").await;
 
     let response = common::get_with_cookie(&app, &format!("/scan?token={token}"), &user.cookie).await;
 
