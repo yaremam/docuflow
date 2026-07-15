@@ -36,13 +36,29 @@ impl TelemetryGuard {
     }
 }
 
-/// Initializes the global `tracing` subscriber with an OpenTelemetry OTLP/gRPC layer
-/// exporting to `otlp_endpoint`.
+/// Initializes the global `tracing` subscriber: a stdout `fmt` layer always
+/// (so `docker logs` is useful on deployments with no collector at all —
+/// feature 021), plus an OpenTelemetry OTLP/gRPC layer exporting to
+/// `otlp_endpoint` when one is configured. With `None`, no exporter is
+/// created and no export is ever attempted.
 ///
-/// Must be called from within a Tokio runtime (required by the OTLP batch exporter).
-/// The gRPC channel connects lazily, so this succeeds even if the collector isn't
-/// reachable yet — spans are simply dropped by the batch processor until it is.
-pub fn init_telemetry(otlp_endpoint: &str) -> Result<TelemetryGuard, TelemetryError> {
+/// Must be called from within a Tokio runtime (required by the OTLP batch
+/// exporter). The gRPC channel connects lazily, so this succeeds even if the
+/// collector isn't reachable yet — spans are simply dropped by the batch
+/// processor until it is.
+pub fn init_telemetry(otlp_endpoint: Option<&str>) -> Result<TelemetryGuard, TelemetryError> {
+    let filter_layer = EnvFilter::builder()
+        .with_default_directive(LevelFilter::INFO.into())
+        .from_env_lossy();
+    let registry = tracing_subscriber::registry()
+        .with(filter_layer)
+        .with(tracing_subscriber::fmt::layer());
+
+    let Some(otlp_endpoint) = otlp_endpoint else {
+        registry.try_init()?;
+        return Ok(TelemetryGuard);
+    };
+
     let resource = Resource::new(vec![
         KeyValue::new("service.name", env!("CARGO_PKG_NAME")),
         KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
@@ -59,14 +75,8 @@ pub fn init_telemetry(otlp_endpoint: &str) -> Result<TelemetryGuard, TelemetryEr
         .with_trace_config(TraceConfig::default().with_resource(resource))
         .install_batch(Tokio)?;
 
-    let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
-    let filter_layer = EnvFilter::builder()
-        .with_default_directive(LevelFilter::INFO.into())
-        .from_env_lossy();
-
-    tracing_subscriber::registry()
-        .with(filter_layer)
-        .with(otel_layer)
+    registry
+        .with(tracing_opentelemetry::layer().with_tracer(tracer))
         .try_init()?;
 
     Ok(TelemetryGuard)

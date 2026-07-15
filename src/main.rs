@@ -7,10 +7,18 @@ use docuflow::{telemetry, web};
 async fn main() -> Result<(), AppError> {
     let _ = dotenvy::dotenv();
 
-    let otlp_endpoint =
-        std::env::var("OTLP_ENDPOINT").unwrap_or_else(|_| "http://localhost:4317".to_string());
-    let telemetry_guard = telemetry::init_telemetry(&otlp_endpoint)?;
-    tracing::info!("server booting");
+    // No silent localhost fallback: unset (or empty) means "no collector
+    // here" — stdout logs only. Dev setups export to Jaeger by setting
+    // OTLP_ENDPOINT explicitly (`.cargo/config.toml`, `.env`,
+    // `docker-compose.yml`); a pulled image (feature 021) runs without one.
+    let otlp_endpoint = std::env::var("OTLP_ENDPOINT")
+        .ok()
+        .filter(|endpoint| !endpoint.is_empty());
+    let telemetry_guard = telemetry::init_telemetry(otlp_endpoint.as_deref())?;
+    match &otlp_endpoint {
+        Some(endpoint) => tracing::info!(otlp_endpoint = %endpoint, "server booting"),
+        None => tracing::info!("server booting (trace export disabled: OTLP_ENDPOINT unset)"),
+    }
 
     let database_url = std::env::var("DATABASE_URL").map_err(|_| AppError::MissingConfig("DATABASE_URL"))?;
     let (state, session_layer) = web::state::bootstrap(&database_url).await?;

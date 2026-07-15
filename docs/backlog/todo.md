@@ -1,4 +1,15 @@
-- Serbian OCR + a distinct language-field value — explicitly skipped from feature 020's German/Dutch/Ukrainian pack expansion (2026-07-13); the language field itself already accepts "sr" (full ISO 639-1 picker), it just has no dedicated OCR trained-data pack yet
 - implement proper password reset
-- improve OCR quality - results are shit
 - batch feature 018's per-facet-option count queries into fewer round trips if page-load latency ever becomes a real complaint (deliberately deferred out of 018, see TDR 018 §2 Alternative B)
+- full-text search over ocr_text — today the search box only parses comma-separated tags; Postgres tsvector/pg_trgm as another smart-filter facet, no new infra (top pick from 2026-07-15 brainstorm)
+- auto-classification / document type — doc_type field (bill, contract, insurance, receipt, ID…) suggested from OCR text via keyword rules, confirmable like the 012 date suggestion; becomes another facet
+- non-English month names in date_extract.rs — already on ARCHITECTURE §8 deferred list; improves date-suggestion hit rate for Cyrillic/German/Dutch documents
+- expiry dates + renewal reminders — date_expires column with OCR suggestion (reuse 012's pattern), "expiring soon" dashboard strip, reminder emails via existing mailer/Mailpit stack
+- duplicate detection — hash file bytes on upload, warn "you already uploaded this on …"
+- trash / soft delete with restore — delete is currently permanent; 30-day trash
+- bulk actions on dashboard — multi-select for bulk tag/delete, plus the deferred bulk "reprocess all eligible OCR" action from ARCHITECTURE §8
+- multi-page scan — one 009 QR session should be able to append pages into a single (PDF) document instead of one page per session
+- thumbnails + in-browser preview — dashboard thumbnails, document-page preview with OCR text side by side (later: search-hit highlighting, pairs with full-text search)
+- email-in ingestion — per-user address to forward bill PDFs to; bigger lift, needs inbound mail handling
+- export / takeout — one zip with all blobs + metadata JSON/CSV
+- 2FA (TOTP) — security pass together with the proper-password-reset item above
+- multi-user household tenant — invite flow + membership roles; schema already anticipates it (ARCHITECTURE §8); biggest lift, keep parked until something needs it

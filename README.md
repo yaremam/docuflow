@@ -21,7 +21,28 @@ That's it for just running the app — the container image ships a prebuilt
 binary, so no local Rust toolchain is required. You only need Rust installed
 if you're editing the code (see [Developing without Docker](#developing-without-docker)).
 
-## Build & Run
+## Run the published image (no clone needed)
+
+A tested nightly image is published to GHCR by `.github/workflows/nightly.yml`
+(every tag implies `cargo check` + `cargo test` passed on that commit):
+
+```
+ghcr.io/yaremam/docuflow:nightly            # newest passing build of main
+ghcr.io/yaremam/docuflow:nightly-YYYY-MM-DD # pinned, for rollback
+ghcr.io/yaremam/docuflow:sha-<short>        # exact commit
+```
+
+To self-host (e.g. on a Synology NAS via Container Manager), grab
+[`deploy/docker-compose.yml`](deploy/docker-compose.yml) and
+[`deploy/.env.example`](deploy/.env.example) — those two files are the whole
+deployment, no repo clone required. Copy `.env.example` to `.env`, set your
+LAN address + passwords, then `docker compose up -d`. Update later with
+`docker compose pull && docker compose up -d`; check which build is running
+at `http://<host>:8080/health` (`revision` = git sha).
+
+Images are `linux/amd64` only.
+
+## Build & Run (local dev stack)
 
 ```sh
 docker compose up -d --build

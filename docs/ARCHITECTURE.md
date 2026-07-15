@@ -290,7 +290,15 @@ Notes:
 ## 5. Telemetry
 
 - `tracing` + `tracing-opentelemetry` export spans via OTLP/gRPC to Jaeger
-  (`:4317` ingest, `:16686` UI).
+  (`:4317` ingest, `:16686` UI) — **only when `OTLP_ENDPOINT` is set**
+  (feature 021). Unset (or empty) means no exporter is constructed at all:
+  the mode a pulled image runs in on a host with no collector. Dev setups
+  set it explicitly (`.cargo/config.toml`, `.env`, `docker-compose.yml`);
+  there is no in-code `localhost:4317` fallback anymore.
+- A `fmt` stdout layer is always installed regardless of `OTLP_ENDPOINT`
+  (feature 021), so `docker logs` works on collector-less deployments. It
+  subscribes to the same sanitized event stream the OTel layer exports —
+  no separate PII surface.
 - `tenant.id`/`user.id` are set as **span attributes** (not raw OTel
   Baggage) inside `TenantContext::from_user_id` — Baggage's `Context` guard
   is `!Send` and unsound to hold across an async handler's `.await` points
@@ -384,6 +392,7 @@ first.
 
 | Feature | TDR | Chosen approach | Why (one line) |
 |---|---|---|---|
+| Nightly image shipping (GHCR pipeline + self-host deploy) | [021](tdr/021_nightly_image_shipping_design.md) | GitHub Actions nightly: full `cargo check`/`cargo test` gate, then push `ghcr.io/yaremam/docuflow` (`nightly` / `nightly-YYYY-MM-DD` / `sha-*`, amd64 only), skipping via the published image's revision label; telemetry made opt-in (`OTLP_ENDPOINT` unset → stdout `fmt` logs only); `deploy/docker-compose.yml` is the user-facing artifact | An image tag existing must *imply* its commit passed the suite (CLAUDE.md's CI rule as machinery), and "absence of config" is what a fresh pull runs with — so absence has to be the safe telemetry mode (TDR 021 §2-3) |
 | General language support (German/Dutch/Ukrainian OCR, full-world tagging) | [020](tdr/020_general_language_support_design.md) | `documents.language` opened to any ISO 639-1 code (validated via `isolang`, not a CHECK enum); OCR pack set widened to `eng+deu+nld+ukr` (Russian pack retired); detection stays restricted to those 4 codes | Field flexibility and OCR-pack coverage are separable concerns — "any language" tagging doesn't require OCR to be tuned for all of them (TDR 020 §2-3) |
 | EXIF-based issued-date suggestion | [019](tdr/019_exif_issued_date_suggestion_design.md) | `kamadak-exif` reads `DateTimeOriginal`/`DateTime`, used only as a fallback when OCR text has no recognizable date; reuses the existing `ocr_suggested_date_issued` column/UI as-is, no new schema | A photo's capture date is a weaker signal than a date printed on the document, so OCR wins when both exist; reusing feature 012's column/UI keeps this additive rather than a parallel suggestion mechanism (TDR 019 §1) |
 | Narrowed smart-filter facet counts | [018](tdr/018_narrowed_facet_counts_design.md) | Each facet option's count is its own `count_documents` call with that facet's own dimension pinned to one candidate and every other active facet left as-is; candidate sets (which tags/years exist) stay unfiltered | Closes the gap TDR 015 §2 named and deferred; accepted ~15-20 small queries per page load over a more complex batched query, given personal-scale document counts (TDR 018 §2) |
@@ -456,3 +465,13 @@ gaps:
   EXIF capture date) — feature 019 reuses feature 012's single
   suggestion box/column as-is; the user sees one suggestion either way,
   never which of the two sources produced it (TDR 019 §2 Alternative B).
+- **arm64 images, deployment auto-update, real-provider SMTP, and
+  HTTPS/reverse-proxy config** — all deliberately outside feature 021's
+  nightly-image pipeline (backlog 021 §3): images are `linux/amd64` only
+  (the sole known target, a Synology DS920+, is amd64 — and note its
+  J4125 has no AVX, so builds must never use `-C target-cpu=native`);
+  updating the deployment means running `docker compose pull` yourself
+  (Watchtower/DSM automation is the operator's call); the deploy compose
+  ships Mailpit as a mail-catcher placeholder, so password-reset emails
+  are viewable at `:8025` but never actually delivered until `SMTP_*`
+  points at a real provider.

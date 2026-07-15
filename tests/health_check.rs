@@ -13,4 +13,7 @@ async fn get_health_returns_json_status() {
     assert_eq!(json["name"], "DocuFlow");
     assert_eq!(json["status"], "healthy");
     assert!(json["version"].is_string());
+    // Outside the image build (which bakes GIT_SHA in — feature 021), the
+    // revision reports the "dev" fallback, including here in tests.
+    assert_eq!(json["revision"], "dev");
 }

@@ -6,6 +6,10 @@
 # single invocation. Not secrets: these are fixed, well-known local-only
 # dev credentials, not real production values.
 DATABASE_URL = "postgres://admin:secretpassword@localhost:5432/doc_manager_db"
+# Explicit since feature 021: an unset OTLP_ENDPOINT now means "no trace
+# export" (the mode a pulled image runs in on a NAS), so dev's Jaeger
+# export is opted into here instead of being a silent in-code fallback.
+OTLP_ENDPOINT = "http://localhost:4317"
 AWS_ENDPOINT_URL = "http://localhost:9000"
 AWS_ACCESS_KEY_ID = "minioadmin"
 AWS_SECRET_ACCESS_KEY = "minioadmin"

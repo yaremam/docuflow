@@ -1,0 +1,99 @@
+# Self-hosting stack (feature 021): runs the prebuilt nightly image from
+# GHCR — no repo clone, no Rust toolchain, no `build:`. First target is a
+# Synology NAS via DSM's Container Manager ("Projects"), but any
+# docker-compose host works.
+#
+#   docker compose up -d          # start everything
+#   docker compose pull && docker compose up -d   # update to newest nightly
+#
+# ── REQUIRED TUNING ─────────────────────────────────────────────────────
+# Copy `.env.example` (next to this file) to `.env` and set:
+#
+#   APP_BASE_URL             e.g. http://192.168.1.50:8080
+#   BLOB_PUBLIC_ENDPOINT_URL e.g. http://192.168.1.50:9000
+#
+# Both are embedded in content that OTHER devices open — the phone-camera
+# scan QR code and presigned document/picture URLs — so they must be your
+# host's LAN address (or DSM hostname), never `localhost` and never a
+# Docker-internal hostname. Everything else has working defaults.
+# ────────────────────────────────────────────────────────────────────────
+
+services:
+  app:
+    image: ghcr.io/yaremam/docuflow:nightly
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://docuflow:${POSTGRES_PASSWORD:-change-me-please}@postgres:5432/docuflow
+      # Which build is running: http://<host>:<port>/health reports the git
+      # revision — include it when reporting a misbehaving nightly.
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
+      BLOB_PUBLIC_ENDPOINT_URL: ${BLOB_PUBLIC_ENDPOINT_URL:-http://localhost:9000}
+      AWS_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_USER:-docuflow}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_PASSWORD:-change-me-please}
+      AWS_REGION: us-east-1
+      BLOB_BUCKET_NAME: docuflow-uploads
+      # Mailpit catches password-reset emails (view at http://<host>:8025);
+      # they are NOT delivered anywhere. Point SMTP_* at a real provider —
+      # and drop SMTP_INSECURE, which must never be set for one — to get
+      # real delivery.
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_FROM: no-reply@docuflow.local
+      SMTP_INSECURE: "true"
+      # Trace export is off by default (no collector in this stack). If you
+      # run an OTLP collector, set OTLP_ENDPOINT to enable it.
+    ports:
+      - "${APP_PORT:-8080}:8080"
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: docuflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-please}
+      POSTGRES_DB: docuflow
+    volumes:
+      # Named volume by default; on DSM you can bind-mount instead, e.g.
+      #   - /volume1/docker/docuflow/pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docuflow -d docuflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER:-docuflow}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-change-me-please}
+    ports:
+      # Must stay exposed to the LAN: presigned blob URLs
+      # (BLOB_PUBLIC_ENDPOINT_URL above) are fetched by browsers directly.
+      - "${MINIO_PORT:-9000}:9000"
+    volumes:
+      #   - /volume1/docker/docuflow/minio:/data   # DSM bind-mount variant
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "${MAILPIT_UI_PORT:-8025}:8025"
+
+volumes:
+  pgdata:
+  minio_data:

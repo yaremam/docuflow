@@ -1,0 +1,147 @@
+# Nightly image pipeline (feature 021): test `main`, then publish
+# ghcr.io/yaremam/docuflow. See docs/backlog/021_nightly_image_shipping.md
+# and docs/tdr/021_nightly_image_shipping_design.md.
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+# A manual dispatch racing the cron would push the same tags twice;
+# serialize instead (don't cancel — a publish should never be interrupted).
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  # Skip the whole run (cheaply, without a Rust toolchain) when main hasn't
+  # moved since the last published nightly — compared against the
+  # `org.opencontainers.image.revision` label the Dockerfile stamps.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+      sha: ${{ steps.check.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        name: Compare HEAD against the published nightly's revision label
+        run: |
+          sha="$GITHUB_SHA"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          # skopeo is preinstalled on ubuntu-latest runners; the package is
+          # public, so no auth is needed to read the label. First run (no
+          # image published yet) or any inspect hiccup falls through to
+          # "none" and therefore to building — never to a silent skip.
+          published=$(skopeo inspect "docker://$IMAGE:nightly" --format '{{ index .Labels "org.opencontainers.image.revision" }}' 2>/dev/null || echo "none")
+          if [ "$published" = "$sha" ]; then
+            echo "nightly is already at $sha — nothing to do"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "published nightly is at '$published', HEAD is $sha — building"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # CLAUDE.md's CI rule: nothing ships unless `cargo check` and the full
+  # `cargo test` suite pass on this exact commit.
+  test:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: admin
+          POSTGRES_PASSWORD: secretpassword
+          POSTGRES_DB: doc_manager_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U admin -d doc_manager_db"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 10
+      mailpit:
+        image: axllent/mailpit:latest
+        ports:
+          - 1025:1025
+    env:
+      # `.cargo/config.toml` supplies the same dev-stack env the tests use
+      # locally (DATABASE_URL, AWS_*, SMTP_*); the test DB
+      # (doc_manager_db_test) and bucket (docuflow-uploads-test) are
+      # created by the suite itself. SQLX_OFFLINE keeps the sqlx macros on
+      # the checked-in `.sqlx/` cache instead of live-checking against the
+      # empty service database.
+      SQLX_OFFLINE: "true"
+    steps:
+      - uses: actions/checkout@v4
+      # MinIO can't be a `services:` entry — its official image needs the
+      # `server /data` command and services can't override a command. Same
+      # image as the dev stack, started manually instead.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+      - name: Install OCR runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            tesseract-ocr tesseract-ocr-deu tesseract-ocr-nld tesseract-ocr-ukr poppler-utils
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Wait for MinIO
+        run: |
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && exit 0
+            sleep 1
+          done
+          echo "MinIO never became healthy" >&2
+          exit 1
+      - name: cargo check
+        run: cargo check
+      - name: cargo test
+        run: cargo test
+
+  publish:
+    needs: [changes, test]
+    if: needs.changes.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compute tags
+        id: tags
+        run: |
+          echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+          echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      # linux/amd64 only, deliberately: the known deploy target (Synology
+      # DS920+, Celeron J4125) is amd64, and its CPU has no AVX — never add
+      # `-C target-cpu=native` here (CI chips have AVX; the NAS doesn't).
+      # `latest` is deliberately not tagged — reserved for real releases.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          build-args: |
+            GIT_SHA=${{ needs.changes.outputs.sha }}
+          tags: |
+            ${{ env.IMAGE }}:nightly
+            ${{ env.IMAGE }}:nightly-${{ steps.tags.outputs.date }}
+            ${{ env.IMAGE }}:sha-${{ steps.tags.outputs.short }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

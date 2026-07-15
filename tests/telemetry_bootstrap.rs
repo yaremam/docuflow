@@ -1,6 +1,6 @@
 #[tokio::test]
 async fn telemetry_initializes_without_panicking() {
-    let result = docuflow::telemetry::init_telemetry("http://localhost:4317");
+    let result = docuflow::telemetry::init_telemetry(Some("http://localhost:4317"));
     assert!(
         result.is_ok(),
         "expected telemetry init to succeed even if the collector is unreachable, got: {:?}",
