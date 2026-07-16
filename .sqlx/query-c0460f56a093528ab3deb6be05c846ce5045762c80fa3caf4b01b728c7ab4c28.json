@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at\n                   from documents\n                   where tenant_id = $1\n                     and ($2::text[] is null or tags && $2)\n                     and (cardinality($3::text[]) = 0 or tags @> $3)\n                     and (($4::int4 is null and $6 = false)\n                          or ($4::int4 is not null and extract(year from date_issued)::int4 = $4\n                              and ($5::int4 is null or extract(month from date_issued)::int4 = $5))\n                          or ($6 and date_issued is null))\n                     and ((cardinality($7::text[]) = 0 and $8 = false)\n                          or (language = any($7))\n                          or ($8 and language is null))\n                   order by created_at asc",
+  "query": "select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at\n                   from documents\n                   where tenant_id = $1\n                     and (($2::text[] is null or tags && $2)\n                          or ($9::text is not null and ocr_search @@ websearch_to_tsquery('simple', $9)))\n                     and (cardinality($3::text[]) = 0 or tags @> $3)\n                     and (($4::int4 is null and $6 = false)\n                          or ($4::int4 is not null and extract(year from date_issued)::int4 = $4\n                              and ($5::int4 is null or extract(month from date_issued)::int4 = $5))\n                          or ($6 and date_issued is null))\n                     and ((cardinality($7::text[]) = 0 and $8 = false)\n                          or (language = any($7))\n                          or ($8 and language is null))\n                   order by created_at desc",
   "describe": {
     "columns": [
       {
@@ -58,7 +58,8 @@
         "Int4",
         "Bool",
         "TextArray",
-        "Bool"
+        "Bool",
+        "Text"
       ]
     },
     "nullable": [
@@ -73,5 +74,5 @@
       false
     ]
   },
-  "hash": "eab8f98d12ee6945c64c3add3889a9e6bfceec74962c8edb7af8fbd21c4697c2"
+  "hash": "c0460f56a093528ab3deb6be05c846ce5045762c80fa3caf4b01b728c7ab4c28"
 }

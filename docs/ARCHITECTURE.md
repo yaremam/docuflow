@@ -210,6 +210,7 @@ erDiagram
         date ocr_suggested_date_issued "feature 012, nullable"
         text ocr_status "pending|processing|done|failed|skipped"
         text ocr_text
+        tsvector ocr_search "feature 023, generated from ocr_text, GIN-indexed"
         text ocr_error
         text language "feature 014, nullable, any ISO 639-1 code (feature 020)"
         timestamptz created_at
@@ -402,6 +403,7 @@ first.
 
 | Feature | TDR | Chosen approach | Why (one line) |
 |---|---|---|---|
+| Full-text search over OCR'd document text | [023](tdr/023_fulltext_ocr_search_design.md) | Generated `documents.ocr_search tsvector` column (`'simple'` config, not `'english'`) + GIN index; the existing search box's `q` gains a second OR'd condition — `ocr_search @@ websearch_to_tsquery('simple', q)` alongside the existing tag overlap | `'simple'` avoids misleadingly stemming German/Dutch/Ukrainian/Cyrillic OCR text as if it were English (feature 020); one OR'd condition on the existing box needs no new params, facets, or template changes (TDR 023 §2-3) |
 | Multi-page phone scan | [022](tdr/022_multipage_scan_design.md) | One scan session accumulates pages (`scan_pages` + `'capturing'` status, sliding 10-min expiry per page); `POST /scan/:token/finish` assembles them into one PDF via pure-Rust `lopdf`+`image` (`src/pdf_assemble.rs`, JPEG passthrough, page box at 72/150ths of pixels) and pushes it through the existing ingest path | N photos must become *one* archive entry, and a PDF makes feature 010's per-page OCR work unchanged; pure-Rust assembly follows the `qrcode` no-system-dependency precedent over dragging Python (`img2pdf`) into the image (TDR 022 §2) |
 | Nightly image shipping (GHCR pipeline + self-host deploy) | [021](tdr/021_nightly_image_shipping_design.md) | GitHub Actions nightly: full `cargo check`/`cargo test` gate, then push `ghcr.io/yaremam/docuflow` (`nightly` / `nightly-YYYY-MM-DD` / `sha-*`, amd64 only), skipping via the published image's revision label; telemetry made opt-in (`OTLP_ENDPOINT` unset → stdout `fmt` logs only); `deploy/docker-compose.yml` is the user-facing artifact | An image tag existing must *imply* its commit passed the suite (CLAUDE.md's CI rule as machinery), and "absence of config" is what a fresh pull runs with — so absence has to be the safe telemetry mode (TDR 021 §2-3) |
 | General language support (German/Dutch/Ukrainian OCR, full-world tagging) | [020](tdr/020_general_language_support_design.md) | `documents.language` opened to any ISO 639-1 code (validated via `isolang`, not a CHECK enum); OCR pack set widened to `eng+deu+nld+ukr` (Russian pack retired); detection stays restricted to those 4 codes | Field flexibility and OCR-pack coverage are separable concerns — "any language" tagging doesn't require OCR to be tuned for all of them (TDR 020 §2-3) |
@@ -428,6 +430,14 @@ first.
 
 Explicitly scoped out of what's built so far, to avoid being mistaken for
 gaps:
+- **Fuzzy/typo-tolerant OCR text search (`pg_trgm`), relevance-ranked
+  sort, and search-hit highlighting/snippets** — feature 023 added
+  exact-word (post-tokenization) full-text search over `ocr_text` via
+  `tsvector`/GIN only; a typo or partial word won't match, results aren't
+  ordered by match quality, and no result shows *where* in the OCR text
+  it matched. Highlighting is already earmarked to pair with the
+  "thumbnails + in-browser preview" backlog item (see
+  `docs/backlog/023_fulltext_ocr_search.md` §3, TDR 023 §2 Alternative C).
 - **Automatic / bulk OCR retry and reprocessing** — feature 013 added a
   per-document manual "Reprocess OCR" button (`document_show.html`'s
   "Extracted text" card), covering both a retry after `ocr_status =

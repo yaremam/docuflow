@@ -7,7 +7,6 @@
 - duplicate detection — hash file bytes on upload, warn "you already uploaded this on …"
 - trash / soft delete with restore — delete is currently permanent; 30-day trash
 - bulk actions on dashboard — multi-select for bulk tag/delete, plus the deferred bulk "reprocess all eligible OCR" action from ARCHITECTURE §8
-- multi-page scan — one 009 QR session should be able to append pages into a single (PDF) document instead of one page per session
 - thumbnails + in-browser preview — dashboard thumbnails, document-page preview with OCR text side by side (later: search-hit highlighting, pairs with full-text search)
 - email-in ingestion — per-user address to forward bill PDFs to; bigger lift, needs inbound mail handling
 - export / takeout — one zip with all blobs + metadata JSON/CSV

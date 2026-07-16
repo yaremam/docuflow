@@ -119,6 +119,17 @@ fn parse_tag_search(q: &str) -> Option<Vec<String>> {
     }
 }
 
+/// The same search box's second, OR'd way to match a document: full-text
+/// against `documents.ocr_search` (feature 023), independent of
+/// `parse_tag_search`'s comma-split tag overlap. `'simple'` text search
+/// config deliberately, not `'english'` — this app OCRs German/Dutch/
+/// Ukrainian/Cyrillic text too (feature 020), and `'english'` would run
+/// every token through the English stemmer regardless of actual language.
+fn free_text_search(q: &str) -> Option<&str> {
+    let trimmed = q.trim();
+    if trimmed.is_empty() { None } else { Some(trimmed) }
+}
+
 struct DocumentListRow {
     id: Uuid,
     title: Option<String>,
@@ -272,11 +283,13 @@ async fn count_documents(
     undated: bool,
     lang_values: &[String],
     lang_unset: bool,
+    search_text: Option<&str>,
 ) -> Result<i64, AppWebError> {
     let count = sqlx::query_scalar!(
         "select count(*) from documents
          where tenant_id = $1
-           and ($2::text[] is null or tags && $2)
+           and (($2::text[] is null or tags && $2)
+                or ($9::text is not null and ocr_search @@ websearch_to_tsquery('simple', $9)))
            and (cardinality($3::text[]) = 0 or tags @> $3)
            and (($4::int4 is null and $6 = false)
                 or ($4::int4 is not null and extract(year from date_issued)::int4 = $4
@@ -293,6 +306,7 @@ async fn count_documents(
         undated,
         lang_values,
         lang_unset,
+        search_text,
     )
     .fetch_one(&state.pool)
     .await?
@@ -306,12 +320,13 @@ async fn count_documents(
 /// TDR 018 §1 for why those are different questions).
 async fn count_matching_documents(state: &AppState, tenant_id: Uuid, filters: &ListQuery) -> Result<i64, AppWebError> {
     let tag_filter = parse_tag_search(&filters.q);
+    let search_text = free_text_search(&filters.q);
     let date_year = filters.date_year;
     let date_month = if date_year.is_some() { filters.date_month } else { None };
     let lang_values: Vec<String> = filters.lang.iter().filter(|value| value.as_str() != "unset").cloned().collect();
     let lang_unset = filters.lang.iter().any(|value| value == "unset");
 
-    count_documents(state, tenant_id, tag_filter.as_deref(), &filters.tags, date_year, date_month, filters.undated, &lang_values, lang_unset).await
+    count_documents(state, tenant_id, tag_filter.as_deref(), &filters.tags, date_year, date_month, filters.undated, &lang_values, lang_unset, search_text).await
 }
 
 #[tracing::instrument(skip(state, tenancy, query))]
@@ -322,6 +337,7 @@ pub async fn list(
 ) -> Result<DocumentsListTemplate, AppWebError> {
     let nav_avatar_url = nav::avatar_url(&state.pool, &state.blob, tenancy.user_id.0).await?;
     let tag_filter = parse_tag_search(&query.q);
+    let search_text = free_text_search(&query.q);
     let sort = Sort::parse(query.sort.as_deref());
 
     let date_year = query.date_year;
@@ -343,7 +359,8 @@ pub async fn list(
                 r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at
                    from documents
                    where tenant_id = $1
-                     and ($2::text[] is null or tags && $2)
+                     and (($2::text[] is null or tags && $2)
+                          or ($9::text is not null and ocr_search @@ websearch_to_tsquery('simple', $9)))
                      and (cardinality($3::text[]) = 0 or tags @> $3)
                      and (($4::int4 is null and $6 = false)
                           or ($4::int4 is not null and extract(year from date_issued)::int4 = $4
@@ -361,6 +378,7 @@ pub async fn list(
                 query.undated,
                 lang_values.as_slice(),
                 lang_unset,
+                search_text,
             )
             .fetch_all(&state.pool)
             .await?
@@ -371,7 +389,8 @@ pub async fn list(
                 r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at
                    from documents
                    where tenant_id = $1
-                     and ($2::text[] is null or tags && $2)
+                     and (($2::text[] is null or tags && $2)
+                          or ($9::text is not null and ocr_search @@ websearch_to_tsquery('simple', $9)))
                      and (cardinality($3::text[]) = 0 or tags @> $3)
                      and (($4::int4 is null and $6 = false)
                           or ($4::int4 is not null and extract(year from date_issued)::int4 = $4
@@ -389,6 +408,7 @@ pub async fn list(
                 query.undated,
                 lang_values.as_slice(),
                 lang_unset,
+                search_text,
             )
             .fetch_all(&state.pool)
             .await?
@@ -399,7 +419,8 @@ pub async fn list(
                 r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at
                    from documents
                    where tenant_id = $1
-                     and ($2::text[] is null or tags && $2)
+                     and (($2::text[] is null or tags && $2)
+                          or ($9::text is not null and ocr_search @@ websearch_to_tsquery('simple', $9)))
                      and (cardinality($3::text[]) = 0 or tags @> $3)
                      and (($4::int4 is null and $6 = false)
                           or ($4::int4 is not null and extract(year from date_issued)::int4 = $4
@@ -417,6 +438,7 @@ pub async fn list(
                 query.undated,
                 lang_values.as_slice(),
                 lang_unset,
+                search_text,
             )
             .fetch_all(&state.pool)
             .await?
@@ -427,7 +449,8 @@ pub async fn list(
                 r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at
                    from documents
                    where tenant_id = $1
-                     and ($2::text[] is null or tags && $2)
+                     and (($2::text[] is null or tags && $2)
+                          or ($9::text is not null and ocr_search @@ websearch_to_tsquery('simple', $9)))
                      and (cardinality($3::text[]) = 0 or tags @> $3)
                      and (($4::int4 is null and $6 = false)
                           or ($4::int4 is not null and extract(year from date_issued)::int4 = $4
@@ -445,6 +468,7 @@ pub async fn list(
                 query.undated,
                 lang_values.as_slice(),
                 lang_unset,
+                search_text,
             )
             .fetch_all(&state.pool)
             .await?
@@ -455,7 +479,8 @@ pub async fn list(
                 r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, created_at
                    from documents
                    where tenant_id = $1
-                     and ($2::text[] is null or tags && $2)
+                     and (($2::text[] is null or tags && $2)
+                          or ($9::text is not null and ocr_search @@ websearch_to_tsquery('simple', $9)))
                      and (cardinality($3::text[]) = 0 or tags @> $3)
                      and (($4::int4 is null and $6 = false)
                           or ($4::int4 is not null and extract(year from date_issued)::int4 = $4
@@ -473,6 +498,7 @@ pub async fn list(
                 query.undated,
                 lang_values.as_slice(),
                 lang_unset,
+                search_text,
             )
             .fetch_all(&state.pool)
             .await?
@@ -524,6 +550,7 @@ pub async fn list(
             query.undated,
             &lang_values,
             lang_unset,
+            search_text,
         )
         .await?;
         tag_facets.push(TagFacetOption { name, count, checked });
@@ -554,15 +581,25 @@ pub async fn list(
     for row in year_rows {
         let year = row.year.unwrap_or(0);
         let checked = date_year == Some(year);
-        let count =
-            count_documents(&state, tenancy.tenant_id.0, tag_filter.as_deref(), &query.tags, Some(year), None, false, &lang_values, lang_unset).await?;
+        let count = count_documents(&state, tenancy.tenant_id.0, tag_filter.as_deref(), &query.tags, Some(year), None, false, &lang_values, lang_unset, search_text)
+            .await?;
         let months = if checked {
             let mut month_facets = Vec::with_capacity(month_rows.len());
             for month_row in &month_rows {
                 let month = month_row.month.unwrap_or(0);
-                let month_count =
-                    count_documents(&state, tenancy.tenant_id.0, tag_filter.as_deref(), &query.tags, Some(year), Some(month), false, &lang_values, lang_unset)
-                        .await?;
+                let month_count = count_documents(
+                    &state,
+                    tenancy.tenant_id.0,
+                    tag_filter.as_deref(),
+                    &query.tags,
+                    Some(year),
+                    Some(month),
+                    false,
+                    &lang_values,
+                    lang_unset,
+                    search_text,
+                )
+                .await?;
                 month_facets.push(MonthFacetOption {
                     label: month_name(month),
                     value: month.clamp(0, 12) as u8,
@@ -578,7 +615,7 @@ pub async fn list(
     }
 
     let undated_count =
-        count_documents(&state, tenancy.tenant_id.0, tag_filter.as_deref(), &query.tags, None, None, true, &lang_values, lang_unset).await?;
+        count_documents(&state, tenancy.tenant_id.0, tag_filter.as_deref(), &query.tags, None, None, true, &lang_values, lang_unset, search_text).await?;
 
     let language_rows = sqlx::query!(
         "select distinct language from documents where tenant_id = $1 and language is not null order by language",
@@ -599,13 +636,15 @@ pub async fn list(
             query.undated,
             std::slice::from_ref(&code),
             false,
+            search_text,
         )
         .await?;
         let checked = lang_values.iter().any(|v| v == &code);
         let label = crate::languages::display_name(&code);
         language_facets.push(LanguageFacetOption { value: code, label, count, checked });
     }
-    let unset_count = count_documents(&state, tenancy.tenant_id.0, tag_filter.as_deref(), &query.tags, date_year, date_month, query.undated, &[], true).await?;
+    let unset_count =
+        count_documents(&state, tenancy.tenant_id.0, tag_filter.as_deref(), &query.tags, date_year, date_month, query.undated, &[], true, search_text).await?;
     language_facets.push(LanguageFacetOption { value: "unset".to_string(), label: "Not set".to_string(), count: unset_count, checked: lang_unset });
 
     let mut applied_filters: Vec<AppliedFilterChip> = Vec::new();

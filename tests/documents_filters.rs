@@ -91,6 +91,79 @@ async fn tag_facet_is_independent_of_the_free_text_search_box() {
     assert!(!body.contains("matches_q_only.pdf"), "tags=insurance should still exclude docs that don't have it, got: {body}");
 }
 
+async fn set_ocr_text(pool: &sqlx::PgPool, document_id: uuid::Uuid, ocr_text: &str) {
+    sqlx::query!("update documents set ocr_text = $1 where id = $2", ocr_text, document_id).execute(pool).await.unwrap();
+}
+
+#[tokio::test]
+async fn free_text_search_matches_ocr_text_not_just_tags() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "ocrsearch.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "ocrsearch.docs@example.com").await;
+
+    let matching = seed_document(&app.state.pool, user, "verizon_bill.pdf", &["bill"], None, None).await;
+    set_ocr_text(&app.state.pool, matching, "Verizon Wireless monthly invoice, account ending 4521").await;
+    let non_matching = seed_document(&app.state.pool, user, "other_bill.pdf", &["bill"], None, None).await;
+    set_ocr_text(&app.state.pool, non_matching, "Acme Water Utility statement").await;
+
+    let response = common::get_with_cookie(&app, "/documents?q=verizon", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("verizon_bill.pdf"), "expected a doc whose OCR text (not tags) matches q, got: {body}");
+    assert!(!body.contains("other_bill.pdf"), "a doc whose OCR text doesn't match q should be excluded, got: {body}");
+}
+
+#[tokio::test]
+async fn free_text_search_with_no_ocr_or_tag_match_excludes_the_document() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "ocrsearchmiss.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "ocrsearchmiss.docs@example.com").await;
+
+    let doc = seed_document(&app.state.pool, user, "unrelated.pdf", &["bill"], None, None).await;
+    set_ocr_text(&app.state.pool, doc, "Acme Water Utility statement").await;
+
+    let response = common::get_with_cookie(&app, "/documents?q=verizon", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(!body.contains("unrelated.pdf"), "q matching neither tags nor OCR text should exclude the doc, got: {body}");
+}
+
+#[tokio::test]
+async fn free_text_search_matches_a_multi_word_phrase_across_ocr_text() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "ocrsearchphrase.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "ocrsearchphrase.docs@example.com").await;
+
+    let both_words = seed_document(&app.state.pool, user, "electric_company.pdf", &["bill"], None, None).await;
+    set_ocr_text(&app.state.pool, both_words, "Springfield Electric Company annual statement").await;
+    let one_word = seed_document(&app.state.pool, user, "electric_car.pdf", &["bill"], None, None).await;
+    set_ocr_text(&app.state.pool, one_word, "Electric car charging receipt").await;
+
+    let response = common::get_with_cookie(&app, "/documents?q=electric+company", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("electric_company.pdf"), "expected the doc containing both words, got: {body}");
+    assert!(!body.contains("electric_car.pdf"), "a doc missing one of the words shouldn't match a multi-word q, got: {body}");
+}
+
+#[tokio::test]
+async fn free_text_ocr_search_combines_with_an_active_tags_facet() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "ocrsearchtags.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "ocrsearchtags.docs@example.com").await;
+
+    let matches_both = seed_document(&app.state.pool, user, "insurance_verizon.pdf", &["insurance"], None, None).await;
+    set_ocr_text(&app.state.pool, matches_both, "Verizon Wireless invoice").await;
+    let wrong_tag = seed_document(&app.state.pool, user, "auto_verizon.pdf", &["auto"], None, None).await;
+    set_ocr_text(&app.state.pool, wrong_tag, "Verizon Wireless invoice").await;
+
+    let response = common::get_with_cookie(&app, "/documents?q=verizon&tags=insurance", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("insurance_verizon.pdf"), "expected the doc matching both q's OCR text and the tags facet, got: {body}");
+    assert!(!body.contains("auto_verizon.pdf"), "tags facet should still AND-narrow even though q matches via OCR text, got: {body}");
+}
+
 #[tokio::test]
 async fn language_facet_filters_by_selected_language() {
     let app = common::test_state().await;

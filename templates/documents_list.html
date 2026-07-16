@@ -7,8 +7,8 @@
   <form method="get" action="/documents" class="documents-form">
     <div class="documents-toolbar">
       <div class="field search-field">
-        <label for="q">Search by tag</label>
-        <input id="q" name="q" type="text" value="{{ q }}" placeholder="e.g. insurance, 2026, verizon">
+        <label for="q">Search</label>
+        <input id="q" name="q" type="text" value="{{ q }}" placeholder="e.g. insurance, 2026, verizon, or any word from the document">
       </div>
       <div class="field sort-field">
         <label for="sort">Sort by</label>
@@ -34,7 +34,7 @@
     {% if documents.is_empty() && clear_filters_href.is_none() %}
     <div class="empty-state">
       <h3>No documents yet</h3>
-      <p>Once you add a bill, policy, or contract, it'll show up here — searchable by tag and sortable by date.</p>
+      <p>Once you add a bill, policy, or contract, it'll show up here — searchable by tag or document text, and sortable by date.</p>
       <a class="btn btn-stamp" href="/documents/new">+ Add your first document</a>
       <a class="btn btn-outline" href="/scan">Scan with phone</a>
     </div>
