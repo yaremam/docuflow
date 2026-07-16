@@ -5,6 +5,7 @@
 {% block content %}
 <div class="documents-page">
   <form method="get" action="/documents" class="documents-form">
+    <input type="hidden" name="return_to" value="{{ save_search_query }}">
     <div class="documents-toolbar">
       <div class="field search-field">
         <label for="q">Search</label>
@@ -141,6 +142,19 @@
             {% endfor %}
           </div>
         </div>
+
+        <div class="filter-group">
+          <p class="filter-group-title">Document type</p>
+          <div class="filter-options">
+            {% for doc_type in doc_type_facets %}
+            <label class="filter-option{% if doc_type.checked %} is-checked{% endif %}">
+              <input type="checkbox" name="doc_type" value="{{ doc_type.value }}"{% if doc_type.checked %} checked{% endif %}>
+              <span class="filter-option-label">{{ doc_type.label }}</span>
+              <span class="filter-count">{{ doc_type.count }}</span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
       </aside>
       </div>
 
@@ -175,11 +189,27 @@
           {% endif %}
         </div>
         {% else %}
+        <div class="bulk-toolbar" id="bulk-toolbar" hidden>
+          <span class="count"><b id="bulk-toolbar-count">0</b> selected</span>
+          <div class="bulk-toolbar-actions">
+            <span class="bulk-tag-inline">
+              <input type="text" name="tag" placeholder="tag name&hellip;" aria-label="Tag to add">
+              <button class="btn-bulk" type="submit" formaction="/documents/bulk/tag" formmethod="post" formnovalidate>Add tag</button>
+            </span>
+            <button class="btn-bulk" type="submit" formaction="/documents/bulk/reprocess_ocr" formmethod="post" formnovalidate>Reprocess OCR</button>
+            <button class="btn-bulk is-danger" type="submit" formaction="/documents/bulk/delete" formmethod="post" formnovalidate>Delete</button>
+          </div>
+        </div>
         <div class="doc-list">
           {% for doc in documents %}
           <div class="doc-row">
+            <label class="doc-row-select">
+              <input type="checkbox" name="doc_ids" value="{{ doc.id }}" aria-label="Select {{ doc.title }}">
+            </label>
             <a class="doc-row-main" href="/documents/{{ doc.id }}">
-              {% if doc.is_image %}
+              {% if let Some(thumbnail_url) = doc.thumbnail_url %}
+              <div class="doc-thumb"><img src="{{ thumbnail_url }}" alt=""></div>
+              {% else if doc.is_image %}
               <div class="doc-thumb"><img src="{{ doc.file_url }}" alt=""></div>
               {% else %}
               <div class="doc-thumb doc-thumb-pdf">
@@ -202,6 +232,9 @@
                 </div>
                 <div class="doc-row-filename">{{ doc.original_filename }}</div>
                 <div class="doc-row-meta">
+                  {% if let Some(doc_type_label) = doc.doc_type_label %}
+                  <span class="doctype-chip">{{ doc_type_label }}</span>
+                  {% endif %}
                   {% for tag in doc.tags %}
                   <span class="tag-chip">{{ tag }}</span>
                   {% endfor %}
@@ -225,5 +258,32 @@
     </div>
     {% endif %}
   </form>
+  <script>
+    (function () {
+      var checkboxes = document.querySelectorAll('input[name="doc_ids"]');
+      var toolbar = document.getElementById('bulk-toolbar');
+      var count = document.getElementById('bulk-toolbar-count');
+      if (!checkboxes.length || !toolbar || !count) return;
+
+      function update() {
+        var checked = 0;
+        checkboxes.forEach(function (box) {
+          var row = box.closest('.doc-row');
+          if (box.checked) {
+            checked += 1;
+            if (row) row.classList.add('is-selected');
+          } else if (row) {
+            row.classList.remove('is-selected');
+          }
+        });
+        count.textContent = checked;
+        toolbar.hidden = checked === 0;
+      }
+
+      checkboxes.forEach(function (box) {
+        box.addEventListener('change', update);
+      });
+    })();
+  </script>
 </div>
 {% endblock %}

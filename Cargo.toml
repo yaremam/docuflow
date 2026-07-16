@@ -7,6 +7,8 @@ edition = "2024"
 # Вебсервер та асинхронність
 axum = { version = "0.7", features = ["multipart"] }
 tokio = { version = "1.0", features = ["full"] }
+# Паралельне виконання незалежних асинхронних операцій (feature 026's bulk delete)
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tower-http = { version = "0.5", features = ["fs", "set-header", "trace"] }
 serde = { version = "1.0", features = ["derive"] }
 
@@ -48,7 +50,7 @@ regex = "1"
 
 # Визначення мови документа за розпізнаним текстом
 whatlang = "0.18.0"
-axum-extra = { version = "0.9", features = ["query"] }
+axum-extra = { version = "0.9", features = ["query", "form"] }
 # Pinned to match the version axum-extra's own `Query` extractor resolves
 # to, so a stored smart-collection query string parses identically here
 # and there (see TDR 016 §3).
@@ -60,7 +62,7 @@ isolang = { version = "2.4.0", features = ["list_languages"] }
 
 # Збирання багатосторінкового сканування у єдиний PDF-документ (feature 022)
 lopdf = "0.44.0"
-image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp", "tiff"] }
 
 [dev-dependencies]
 http-body-util = "0.1.3"

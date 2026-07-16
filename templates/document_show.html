@@ -19,7 +19,7 @@
   <p class="form-success">Saved.</p>
   {% endif %}
   <div class="detail-grid">
-    <div class="detail-text">
+    <div class="detail-preview-col">
       <div class="card" data-tab="Original file">
         <h2>{{ title }}</h2>
         <p class="card-sub">{{ original_filename }} &middot; {{ file_size_bytes }} bytes &middot; uploaded {{ uploaded_at }}</p>
@@ -32,6 +32,8 @@
         </div>
         {% endif %}
       </div>
+    </div>
+    <div class="detail-ocr-col">
       <div class="card" data-tab="Extracted text">
         {% if let Some(ocr_text) = ocr_text %}
         <div class="detail-text-box">{{ ocr_text }}</div>
@@ -65,7 +67,7 @@
         {% endif %}
       </div>
     </div>
-    <div class="detail-meta">
+    <div class="detail-meta-col">
       <div class="card" data-tab="Metadata">
         <h2>Details</h2>
         <p class="card-sub">Editable — changes are scoped to your workspace only.</p>
@@ -86,6 +88,21 @@
             <div class="suggestion">
               <p>OCR found a possible date: <strong>{{ suggested }}</strong></p>
               <button class="btn-suggestion" type="submit" formaction="/documents/{{ id }}/accept_suggested_date" formmethod="post" formnovalidate>Use this date</button>
+            </div>
+            {% endif %}
+          </div>
+          <div class="field">
+            <label for="doc_type">Document type</label>
+            <select id="doc_type" name="doc_type">
+              <option value=""{% if doc_type == "" %} selected{% endif %}>Not set</option>
+              {% for opt in doc_type_options %}
+              <option value="{{ opt.value }}"{% if doc_type == opt.value %} selected{% endif %}>{{ opt.label }}</option>
+              {% endfor %}
+            </select>
+            {% if let Some(suggested) = suggested_doc_type_display %}
+            <div class="suggestion">
+              <p>OCR suggests: <strong>{{ suggested }}</strong></p>
+              <button class="btn-suggestion" type="submit" formaction="/documents/{{ id }}/accept_suggested_doc_type" formmethod="post" formnovalidate>Use this</button>
             </div>
             {% endif %}
           </div>

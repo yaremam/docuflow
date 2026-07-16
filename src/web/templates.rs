@@ -78,10 +78,16 @@ pub struct DocumentListItem {
     pub original_filename: String,
     pub file_url: String,
     pub is_image: bool,
+    /// A generated, page-1/preview-sized thumbnail (feature 025) — `None`
+    /// until `run_ocr` produces one (or if generation failed), in which
+    /// case the template falls back to the pre-025 `is_image`/`file_url`
+    /// rendering unchanged.
+    pub thumbnail_url: Option<String>,
     pub tags: Vec<String>,
     pub date_issued: Option<String>,
     pub uploaded_at: String,
     pub ocr_status: String,
+    pub doc_type_label: Option<&'static str>,
 }
 
 /// One checkbox in the Tags facet group (see TDR 015 §3) — `count` is
@@ -116,6 +122,18 @@ pub struct YearFacetOption {
 /// `language` up to any ISO 639-1 code, this list is discovered per-tenant
 /// (see `list`'s facet-discovery query) rather than a fixed 3-option set.
 pub struct LanguageFacetOption {
+    pub value: String,
+    pub label: String,
+    pub count: i64,
+    pub checked: bool,
+}
+
+/// One checkbox in the Document type facet group (feature 024) — same
+/// shape/semantics as `LanguageFacetOption` (open string values, an
+/// `"unset"` sentinel, OR-within-facet), since `doc_type` is structurally
+/// the same kind of facet as `language`, not the single-active-value date
+/// facet.
+pub struct DocTypeFacetOption {
     pub value: String,
     pub label: String,
     pub count: i64,
@@ -157,6 +175,7 @@ pub struct DocumentsListTemplate {
     pub undated_count: i64,
     pub undated_checked: bool,
     pub language_facets: Vec<LanguageFacetOption>,
+    pub doc_type_facets: Vec<DocTypeFacetOption>,
     pub applied_filters: Vec<AppliedFilterChip>,
     /// `None` when no facet is active — the template uses this both to
     /// decide whether to render "Clear all" and to pick between the
@@ -212,6 +231,14 @@ pub struct DocumentShowTemplate {
     /// The dropdown's second `<optgroup>` — every other ISO 639-1 language,
     /// alphabetical, manual-tagging only (see TDR 020).
     pub other_language_options: Vec<crate::languages::LanguageOption>,
+    /// `""` or one of `doc_type_options`' values — same "matches the
+    /// `<select>` directly" convention as `language` above (feature 024).
+    pub doc_type: String,
+    pub doc_type_options: &'static [crate::doc_type_extract::DocTypeOption],
+    /// `Some(label)` only when OCR suggested a type *and* `doc_type` is
+    /// still empty — same "one condition, not two" shape as
+    /// `suggested_date_issued_display` (TDR 024, mirroring TDR 012).
+    pub suggested_doc_type_display: Option<&'static str>,
 }
 
 #[derive(askama::Template, askama_web::WebTemplate)]
@@ -223,6 +250,27 @@ pub struct DocumentDeleteTemplate {
     pub id: uuid::Uuid,
     pub title: String,
     pub original_filename: String,
+}
+
+/// One row in the bulk-delete confirm list (feature 026) — same fields as
+/// `DocumentDeleteTemplate`'s single-document shape, just collected.
+pub struct BulkDeleteDocumentSummary {
+    pub id: uuid::Uuid,
+    pub title: String,
+    pub original_filename: String,
+}
+
+#[derive(askama::Template, askama_web::WebTemplate)]
+#[template(path = "document_bulk_delete_confirm.html")]
+pub struct DocumentBulkDeleteConfirmTemplate {
+    pub active_tab: &'static str,
+    pub authenticated: bool,
+    pub nav_avatar_url: Option<String>,
+    pub documents: Vec<BulkDeleteDocumentSummary>,
+    /// Threaded straight back through as a hidden field so the real
+    /// "Delete N documents" button's POST still carries the dashboard's
+    /// filter state (see `bulk_redirect_target`).
+    pub return_to: String,
 }
 
 #[derive(askama::Template, askama_web::WebTemplate)]

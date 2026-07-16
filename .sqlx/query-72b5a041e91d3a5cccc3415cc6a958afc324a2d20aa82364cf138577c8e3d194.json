@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select distinct doc_type from documents where tenant_id = $1 and doc_type is not null order by doc_type",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "doc_type",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "72b5a041e91d3a5cccc3415cc6a958afc324a2d20aa82364cf138577c8e3d194"
+}

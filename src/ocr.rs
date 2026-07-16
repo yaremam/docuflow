@@ -43,11 +43,21 @@ pub const PDF_CONTENT_TYPE: &str = "application/pdf";
 /// read directly (`extract_text`). The one place this project decides
 /// "does this content type need rasterizing before OCR" — callers just
 /// pass the bytes and the content type they were uploaded with.
-pub async fn extract(content_type: &str, bytes: &[u8]) -> Result<String, OcrError> {
+///
+/// The text result and the thumbnail-source byproduct are independent —
+/// a thumbnail only needs pixels, not legible text, so a `tesseract`
+/// failure on a PDF page must not also discard a page 1 that rasterized
+/// just fine. `Some` only for a PDF (reusing the exact raster `pdftoppm`
+/// produced for OCR, rather than a second rasterization pass just for a
+/// thumbnail); `None` for a direct image upload, since the caller already
+/// holds those bytes itself and doesn't need them handed back (avoids
+/// cloning the whole upload a second time), and `None` if rasterization
+/// itself never got far enough to produce a page 1.
+pub async fn extract(content_type: &str, bytes: &[u8]) -> (Result<String, OcrError>, Option<Vec<u8>>) {
     if content_type == PDF_CONTENT_TYPE {
         extract_text_from_pdf(bytes).await
     } else {
-        extract_text(bytes).await
+        (extract_text(bytes).await, None)
     }
 }
 
@@ -126,63 +136,75 @@ impl Drop for TempDir {
 /// of the last page number (e.g. `page-01.png` .. `page-12.png`), so a plain
 /// lexicographic sort of the produced filenames is already page order — no
 /// numeric parsing needed.
-async fn extract_text_from_pdf(pdf_bytes: &[u8]) -> Result<String, OcrError> {
+///
+/// Page 1's raw PNG bytes are read back off disk *before* any `tesseract`
+/// call, and returned alongside the text result either way — including
+/// when a later page's `tesseract` invocation fails. Rasterization
+/// succeeding is independent of OCR text succeeding, so a `tesseract`
+/// failure must not also throw away a page 1 that's already sitting on
+/// disk, fully rasterized and thumbnail-ready.
+async fn extract_text_from_pdf(pdf_bytes: &[u8]) -> (Result<String, OcrError>, Option<Vec<u8>>) {
     let dir = std::env::temp_dir().join(format!("docuflow-ocr-pdf-{}", Uuid::new_v4()));
-    tokio::fs::create_dir(&dir)
-        .await
-        .map_err(|e| OcrError(format!("failed to create temp dir: {e}")))?;
-    tokio::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
-        .await
-        .map_err(|e| OcrError(format!("failed to set temp dir permissions: {e}")))?;
+    if let Err(error) = tokio::fs::create_dir(&dir).await {
+        return (Err(OcrError(format!("failed to create temp dir: {error}"))), None);
+    }
+    if let Err(error) = tokio::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).await {
+        return (Err(OcrError(format!("failed to set temp dir permissions: {error}"))), None);
+    }
     let temp_dir = TempDir(dir);
 
     let pdf_path = temp_dir.0.join("input.pdf");
-    tokio::fs::write(&pdf_path, pdf_bytes)
-        .await
-        .map_err(|e| OcrError(format!("failed to write temp file: {e}")))?;
+    if let Err(error) = tokio::fs::write(&pdf_path, pdf_bytes).await {
+        return (Err(OcrError(format!("failed to write temp file: {error}"))), None);
+    }
     // Holds a tenant's private document bytes, briefly, on disk.
-    tokio::fs::set_permissions(&pdf_path, std::fs::Permissions::from_mode(0o600))
-        .await
-        .map_err(|e| OcrError(format!("failed to set temp file permissions: {e}")))?;
+    if let Err(error) = tokio::fs::set_permissions(&pdf_path, std::fs::Permissions::from_mode(0o600)).await {
+        return (Err(OcrError(format!("failed to set temp file permissions: {error}"))), None);
+    }
 
     let page_prefix = temp_dir.0.join("page");
-    let output = tokio::process::Command::new("pdftoppm")
-        .arg("-png")
-        .arg(&pdf_path)
-        .arg(&page_prefix)
-        .output()
-        .await
-        .map_err(|e| OcrError(format!("failed to spawn pdftoppm: {e}")))?;
+    let output = match tokio::process::Command::new("pdftoppm").arg("-png").arg(&pdf_path).arg(&page_prefix).output().await {
+        Ok(output) => output,
+        Err(error) => return (Err(OcrError(format!("failed to spawn pdftoppm: {error}"))), None),
+    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(OcrError(format!("pdftoppm exited with {}: {stderr}", output.status)));
+        return (Err(OcrError(format!("pdftoppm exited with {}: {stderr}", output.status))), None);
     }
 
     let mut page_paths = Vec::new();
-    let mut read_dir = tokio::fs::read_dir(&temp_dir.0)
-        .await
-        .map_err(|e| OcrError(format!("failed to list rasterized pages: {e}")))?;
-    while let Some(entry) = read_dir
-        .next_entry()
-        .await
-        .map_err(|e| OcrError(format!("failed to list rasterized pages: {e}")))?
-    {
+    let mut read_dir = match tokio::fs::read_dir(&temp_dir.0).await {
+        Ok(read_dir) => read_dir,
+        Err(error) => return (Err(OcrError(format!("failed to list rasterized pages: {error}"))), None),
+    };
+    loop {
+        let entry = match read_dir.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(error) => return (Err(OcrError(format!("failed to list rasterized pages: {error}"))), None),
+        };
         let path = entry.path();
         if path.extension().and_then(|ext| ext.to_str()) == Some("png") {
             page_paths.push(path);
         }
     }
     if page_paths.is_empty() {
-        return Err(OcrError("pdftoppm produced no pages".to_string()));
+        return (Err(OcrError("pdftoppm produced no pages".to_string())), None);
     }
     page_paths.sort();
 
+    // Best-effort: a failed read here just means no thumbnail byproduct,
+    // not a failed OCR pass — text extraction below doesn't depend on it.
+    let page_one_png = tokio::fs::read(&page_paths[0]).await.ok();
+
     let mut pages = Vec::with_capacity(page_paths.len());
     for (index, page_path) in page_paths.iter().enumerate() {
-        let text = run_tesseract(page_path).await?;
-        pages.push(format!("--- page {} ---\n{text}", index + 1));
+        match run_tesseract(page_path).await {
+            Ok(text) => pages.push(format!("--- page {} ---\n{text}", index + 1)),
+            Err(error) => return (Err(error), page_one_png),
+        }
     }
 
-    Ok(pages.join("\n\n"))
+    (Ok(pages.join("\n\n")), page_one_png)
 }

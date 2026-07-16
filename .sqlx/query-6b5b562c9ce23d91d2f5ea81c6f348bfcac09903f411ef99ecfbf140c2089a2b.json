@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "delete from documents where id = any($1) and tenant_id = $2 returning blob_key",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "blob_key",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6b5b562c9ce23d91d2f5ea81c6f348bfcac09903f411ef99ecfbf140c2089a2b"
+}

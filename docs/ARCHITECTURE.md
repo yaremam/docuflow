@@ -213,6 +213,9 @@ erDiagram
         tsvector ocr_search "feature 023, generated from ocr_text, GIN-indexed"
         text ocr_error
         text language "feature 014, nullable, any ISO 639-1 code (feature 020)"
+        text doc_type "feature 024, nullable, open text (fixed <select> options)"
+        text ocr_suggested_doc_type "feature 024, nullable"
+        text thumbnail_status "feature 025, nullable, pending|done|failed"
         timestamptz created_at
         timestamptz updated_at
     }
@@ -403,6 +406,9 @@ first.
 
 | Feature | TDR | Chosen approach | Why (one line) |
 |---|---|---|---|
+| Bulk actions on the dashboard | [026](tdr/026_bulk_dashboard_actions_design.md) | Row checkboxes + a toolbar inside the existing single filters `<form>` via `formaction`/`formmethod` (never a second nested form); `axum_extra::extract::Form` for the repeated `doc_ids`; bulk delete gets a confirm page, bulk tag/reprocess don't; reprocess reuses `reprocess_ocr`'s exact eligibility guard and the existing `state.ocr_semaphore` | Avoids this project's own documented nested-`<form>` bug; the semaphore already bounds concurrent OCR regardless of how many rows are bulk-spawned, closing §8's bulk-reprocess gap with no new batching logic (TDR 026 §2 Alternative E) |
+| Dashboard thumbnails + side-by-side preview | [025](tdr/025_thumbnails_and_preview_design.md) | Thumbnail generated inside the existing `run_ocr` background task, reusing bytes it already has (original image bytes, or a PDF's already-rasterized page 1) via new `src/thumbnail.rs`; `documents.thumbnail_status` mirrors `ocr_status`'s pattern; `document_show.html`'s preview/OCR-text cards become side-by-side siblings instead of one stacked column | No new blob fetch or second PDF rasterization pass — `run_ocr` already has the needed bytes in memory (TDR 025 §2 Alternative A) |
+| Auto-classification / document type | [024](tdr/024_doc_type_classification_design.md) | Keyword-rule scan of `ocr_text` (`src/doc_type_extract.rs`) writes `ocr_suggested_doc_type`, mirroring feature 012's suggest-then-confirm split with `doc_type`; facet shape mirrors `language` (open string, multi-select, `"unset"` option), not the single-active-value date facet | A wrong guess must never land silently (TDR 012 precedent); `doc_type` is structurally an OR-multi-select facet like `language`, not a single-value one like `date_issued` (TDR 024 §2-3) |
 | Full-text search over OCR'd document text | [023](tdr/023_fulltext_ocr_search_design.md) | Generated `documents.ocr_search tsvector` column (`'simple'` config, not `'english'`) + GIN index; the existing search box's `q` gains a second OR'd condition — `ocr_search @@ websearch_to_tsquery('simple', q)` alongside the existing tag overlap | `'simple'` avoids misleadingly stemming German/Dutch/Ukrainian/Cyrillic OCR text as if it were English (feature 020); one OR'd condition on the existing box needs no new params, facets, or template changes (TDR 023 §2-3) |
 | Multi-page phone scan | [022](tdr/022_multipage_scan_design.md) | One scan session accumulates pages (`scan_pages` + `'capturing'` status, sliding 10-min expiry per page); `POST /scan/:token/finish` assembles them into one PDF via pure-Rust `lopdf`+`image` (`src/pdf_assemble.rs`, JPEG passthrough, page box at 72/150ths of pixels) and pushes it through the existing ingest path | N photos must become *one* archive entry, and a PDF makes feature 010's per-page OCR work unchanged; pure-Rust assembly follows the `qrcode` no-system-dependency precedent over dragging Python (`img2pdf`) into the image (TDR 022 §2) |
 | Nightly image shipping (GHCR pipeline + self-host deploy) | [021](tdr/021_nightly_image_shipping_design.md) | GitHub Actions nightly: full `cargo check`/`cargo test` gate, then push `ghcr.io/yaremam/docuflow` (`nightly` / `nightly-YYYY-MM-DD` / `sha-*`, amd64 only), skipping via the published image's revision label; telemetry made opt-in (`OTLP_ENDPOINT` unset → stdout `fmt` logs only); `deploy/docker-compose.yml` is the user-facing artifact | An image tag existing must *imply* its commit passed the suite (CLAUDE.md's CI rule as machinery), and "absence of config" is what a fresh pull runs with — so absence has to be the safe telemetry mode (TDR 021 §2-3) |
@@ -435,18 +441,30 @@ gaps:
   exact-word (post-tokenization) full-text search over `ocr_text` via
   `tsvector`/GIN only; a typo or partial word won't match, results aren't
   ordered by match quality, and no result shows *where* in the OCR text
-  it matched. Highlighting is already earmarked to pair with the
-  "thumbnails + in-browser preview" backlog item (see
-  `docs/backlog/023_fulltext_ocr_search.md` §3, TDR 023 §2 Alternative C).
-- **Automatic / bulk OCR retry and reprocessing** — feature 013 added a
+  it matched. Feature 025 (dashboard thumbnails + side-by-side preview)
+  was the backlog item highlighting was earmarked to pair with — both
+  023 and 025 have now shipped, but highlighting itself is still a
+  distinct, not-yet-built follow-up (see
+  `docs/backlog/023_fulltext_ocr_search.md` §3, TDR 023 §2 Alternative C,
+  and TDR 025 §4).
+- **Thumbnails for documents uploaded before feature 025 shipped** —
+  `thumbnail_status` stays `null` until a pre-existing document is
+  reprocessed via feature 013's per-document "Reprocess OCR" button; no
+  backfill sweep (TDR 025 §4).
+- **Multi-page PDF thumbnails** — feature 025 thumbnails only page 1 of a
+  PDF (including a feature-022 multi-page scan); the detail page's native
+  PDF `<embed>` is still how a user sees the rest of the pages.
+- **Automatic OCR retry and reprocessing** — feature 013 added a
   per-document manual "Reprocess OCR" button (`document_show.html`'s
   "Extracted text" card), covering both a retry after `ocr_status =
   'failed'` and "redo the OCR" for a document that predates a pipeline
   improvement (feature 010's PDF support, 011's Cyrillic support, 012's
-  issued-date suggestion) — see TDR 013. Nothing re-queues a document
-  automatically (on boot, on a schedule, or when a new OCR feature ships),
-  and there's no bulk "reprocess all eligible documents" action — a user
-  has to click the button once per document.
+  issued-date suggestion) — see TDR 013. Feature 026 added a *manual*
+  bulk version (select documents on the dashboard, "Reprocess OCR" in the
+  bulk toolbar), but nothing re-queues a document automatically — on
+  boot, on a schedule, or when a new OCR feature ships — a user still has
+  to select and click, even if now for many documents at once instead of
+  one at a time.
 - **Reordering, retaking, or deleting individual pages of a phone scan** —
   feature 022 made one QR session accumulate N pages into one PDF
   document, but pages land strictly in capture order: a botched page means

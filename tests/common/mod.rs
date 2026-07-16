@@ -346,6 +346,13 @@ pub async fn login(
 /// credentials, returning the login response — the common "get an
 /// authenticated session" setup shared by tests that need to already be
 /// logged in.
+/// Looks up a signed-up user's id by email — shared by every test file
+/// that seeds document rows directly (bypassing the upload/OCR pipeline)
+/// and needs a real `user_id`/`tenant_id` to insert them under.
+pub async fn user_id(app: &TestApp, email: &str) -> uuid::Uuid {
+    sqlx::query_scalar!("select id from users where email = $1", email).fetch_one(&app.state.pool).await.unwrap()
+}
+
 pub async fn signup_and_login(
     test_app: &TestApp,
     email: &str,

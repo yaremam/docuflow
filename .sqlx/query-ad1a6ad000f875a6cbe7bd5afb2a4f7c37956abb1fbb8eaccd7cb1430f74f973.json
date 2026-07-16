@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update documents set doc_type = ocr_suggested_doc_type, updated_at = now()\n         where id = $1 and tenant_id = $2 and doc_type is null",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ad1a6ad000f875a6cbe7bd5afb2a4f7c37956abb1fbb8eaccd7cb1430f74f973"
+}

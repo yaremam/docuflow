@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}Delete {{ documents.len() }} documents — DocuFlow{% endblock %}
+
+{% block content %}
+<div class="form-page">
+  <div class="card card-danger" data-tab="Confirm delete">
+    <h2>Delete {{ documents.len() }} documents?</h2>
+    <p class="confirm-warning">This can't be undone. The files and their extracted text are permanently removed from your workspace.</p>
+    <div class="bulk-confirm-list">
+      {% for doc in documents %}
+      <div class="bulk-confirm-row">
+        <div class="doc-title">{{ doc.title }}</div>
+        <div class="doc-filename">{{ doc.original_filename }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    <form method="post" action="/documents/bulk/delete/confirm" class="confirm-actions">
+      {% for doc in documents %}
+      <input type="hidden" name="doc_ids" value="{{ doc.id }}">
+      {% endfor %}
+      <input type="hidden" name="return_to" value="{{ return_to }}">
+      <button class="btn btn-danger" type="submit">Delete {{ documents.len() }} documents permanently</button>
+      <a class="btn btn-outline" href="/documents">Cancel</a>
+    </form>
+  </div>
+</div>
+{% endblock %}

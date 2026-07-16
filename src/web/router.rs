@@ -48,6 +48,19 @@ pub fn app(state: AppState, session_layer: SessionManagerLayer<PostgresStore>) -
             post(handlers::documents::rename_collection),
         )
         .route(
+            "/documents/bulk/delete",
+            post(handlers::documents::bulk_delete_confirm),
+        )
+        .route(
+            "/documents/bulk/delete/confirm",
+            post(handlers::documents::bulk_delete),
+        )
+        .route("/documents/bulk/tag", post(handlers::documents::bulk_tag))
+        .route(
+            "/documents/bulk/reprocess_ocr",
+            post(handlers::documents::bulk_reprocess_ocr),
+        )
+        .route(
             "/documents/:id",
             get(handlers::documents::show).post(handlers::documents::update),
         )
@@ -58,6 +71,10 @@ pub fn app(state: AppState, session_layer: SessionManagerLayer<PostgresStore>) -
         .route(
             "/documents/:id/accept_suggested_date",
             post(handlers::documents::accept_suggested_date),
+        )
+        .route(
+            "/documents/:id/accept_suggested_doc_type",
+            post(handlers::documents::accept_suggested_doc_type),
         )
         .route(
             "/documents/:id/reprocess_ocr",

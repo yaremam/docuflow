@@ -1,11 +1,6 @@
 mod common;
 
-async fn user_id(app: &common::TestApp, email: &str) -> uuid::Uuid {
-    sqlx::query_scalar!("select id from users where email = $1", email)
-        .fetch_one(&app.state.pool)
-        .await
-        .unwrap()
-}
+use common::user_id;
 
 #[allow(clippy::too_many_arguments)]
 async fn seed_document(
@@ -93,6 +88,90 @@ async fn tag_facet_is_independent_of_the_free_text_search_box() {
 
 async fn set_ocr_text(pool: &sqlx::PgPool, document_id: uuid::Uuid, ocr_text: &str) {
     sqlx::query!("update documents set ocr_text = $1 where id = $2", ocr_text, document_id).execute(pool).await.unwrap();
+}
+
+async fn set_doc_type(pool: &sqlx::PgPool, document_id: uuid::Uuid, doc_type: &str) {
+    sqlx::query!("update documents set doc_type = $1 where id = $2", doc_type, document_id).execute(pool).await.unwrap();
+}
+
+#[tokio::test]
+async fn doc_type_facet_filters_to_documents_with_selected_type() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "doctypefacet.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "doctypefacet.docs@example.com").await;
+
+    let bill = seed_document(&app.state.pool, user, "bill.pdf", &["utilities"], None, None).await;
+    set_doc_type(&app.state.pool, bill, "bill").await;
+    let insurance = seed_document(&app.state.pool, user, "insurance.pdf", &["utilities"], None, None).await;
+    set_doc_type(&app.state.pool, insurance, "insurance").await;
+
+    let response = common::get_with_cookie(&app, "/documents?doc_type=bill", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("bill.pdf"));
+    assert!(!body.contains("insurance.pdf"));
+}
+
+#[tokio::test]
+async fn doc_type_facet_unset_option_filters_to_documents_without_a_type() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "doctypeunset.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "doctypeunset.docs@example.com").await;
+
+    let bill = seed_document(&app.state.pool, user, "bill.pdf", &["utilities"], None, None).await;
+    set_doc_type(&app.state.pool, bill, "bill").await;
+    seed_document(&app.state.pool, user, "no_type.pdf", &["utilities"], None, None).await;
+
+    let response = common::get_with_cookie(&app, "/documents?doc_type=unset", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("no_type.pdf"));
+    assert!(!body.contains("bill.pdf"));
+}
+
+#[tokio::test]
+async fn doc_type_facet_ors_multiple_selected_values() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "doctypeor.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "doctypeor.docs@example.com").await;
+
+    let bill = seed_document(&app.state.pool, user, "bill.pdf", &["utilities"], None, None).await;
+    set_doc_type(&app.state.pool, bill, "bill").await;
+    let insurance = seed_document(&app.state.pool, user, "insurance.pdf", &["utilities"], None, None).await;
+    set_doc_type(&app.state.pool, insurance, "insurance").await;
+    seed_document(&app.state.pool, user, "no_type.pdf", &["utilities"], None, None).await;
+
+    let response = common::get_with_cookie(&app, "/documents?doc_type=bill&doc_type=insurance", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("bill.pdf"));
+    assert!(body.contains("insurance.pdf"));
+    assert!(!body.contains("no_type.pdf"));
+}
+
+#[tokio::test]
+async fn doc_type_facet_counts_narrow_when_a_tag_filter_is_active() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "doctypecountnarrow.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "doctypecountnarrow.docs@example.com").await;
+
+    let bill_insurance = seed_document(&app.state.pool, user, "bill_insurance.pdf", &["insurance"], None, None).await;
+    set_doc_type(&app.state.pool, bill_insurance, "bill").await;
+    let bill_utilities = seed_document(&app.state.pool, user, "bill_utilities.pdf", &["utilities"], None, None).await;
+    set_doc_type(&app.state.pool, bill_utilities, "bill").await;
+
+    let unfiltered = common::get_with_cookie(&app, "/documents", &cookie).await;
+    let unfiltered_body = common::body_string(unfiltered).await;
+    assert_eq!(facet_count_after_label(&unfiltered_body, "Bill").as_deref(), Some("2"), "unfiltered: both bills count, got: {unfiltered_body}");
+
+    let filtered = common::get_with_cookie(&app, "/documents?tags=insurance", &cookie).await;
+    let filtered_body = common::body_string(filtered).await;
+    assert_eq!(
+        facet_count_after_label(&filtered_body, "Bill").as_deref(),
+        Some("1"),
+        "with tags=insurance active, only the insurance-tagged bill should count, got: {filtered_body}"
+    );
 }
 
 #[tokio::test]

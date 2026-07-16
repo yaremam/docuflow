@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select tags from documents where id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "tags",
+        "type_info": "TextArray"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "19ab3180ace15f7e6080af7bb1d66f6e34c5068455bcff006e8fdde88a8731fb"
+}

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update documents set ocr_status = 'failed', ocr_error = $3, thumbnail_status = $4 where id = $1 and tenant_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3d5ffb990e77e7684a8a59ad3f20f47961bb08e6cd85bd0a8a3124cfbcd3bbf9"
+}

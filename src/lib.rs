@@ -1,5 +1,6 @@
 pub mod blob;
 pub mod date_extract;
+pub mod doc_type_extract;
 pub mod domain;
 pub mod error;
 pub mod exif_extract;
@@ -9,4 +10,5 @@ pub mod mailer;
 pub mod ocr;
 pub mod pdf_assemble;
 pub mod telemetry;
+pub mod thumbnail;
 pub mod web;

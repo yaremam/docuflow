@@ -421,6 +421,41 @@ impl Language {
     }
 }
 
+/// The confirmed `doc_type` field (feature 024) — same blank-means-clear
+/// convention as `Language` above. Rejects anything not one of
+/// `crate::doc_type_extract::dropdown_options()`'s values server-side,
+/// even though the `<select>` in `document_show.html` only ever offers
+/// those values — per CLAUDE.md's "validate at boundaries" rule.
+#[derive(Debug, Default, Clone, serde::Deserialize)]
+#[serde(try_from = "String")]
+pub struct DocTypeField(Option<String>);
+
+#[derive(Debug, thiserror::Error)]
+#[error("document type must be blank or one of the offered options")]
+pub struct DocTypeFieldError;
+
+impl TryFrom<String> for DocTypeField {
+    type Error = DocTypeFieldError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Ok(Self(None));
+        }
+        if crate::doc_type_extract::is_valid(trimmed) {
+            Ok(Self(Some(trimmed.to_string())))
+        } else {
+            Err(DocTypeFieldError)
+        }
+    }
+}
+
+impl DocTypeField {
+    pub fn into_option(self) -> Option<String> {
+        self.0
+    }
+}
+
 /// A saved smart collection's name (TDR 016) — unlike `ProfileField`,
 /// blank is rejected: a nameless collection would be useless in the "My
 /// collections" list.

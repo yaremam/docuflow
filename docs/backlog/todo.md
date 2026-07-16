@@ -1,13 +1,10 @@
 - implement proper password reset
 - batch feature 018's per-facet-option count queries into fewer round trips if page-load latency ever becomes a real complaint (deliberately deferred out of 018, see TDR 018 §2 Alternative B)
-- full-text search over ocr_text — today the search box only parses comma-separated tags; Postgres tsvector/pg_trgm as another smart-filter facet, no new infra (top pick from 2026-07-15 brainstorm)
-- auto-classification / document type — doc_type field (bill, contract, insurance, receipt, ID…) suggested from OCR text via keyword rules, confirmable like the 012 date suggestion; becomes another facet
 - non-English month names in date_extract.rs — already on ARCHITECTURE §8 deferred list; improves date-suggestion hit rate for Cyrillic/German/Dutch documents
 - expiry dates + renewal reminders — date_expires column with OCR suggestion (reuse 012's pattern), "expiring soon" dashboard strip, reminder emails via existing mailer/Mailpit stack
 - duplicate detection — hash file bytes on upload, warn "you already uploaded this on …"
 - trash / soft delete with restore — delete is currently permanent; 30-day trash
-- bulk actions on dashboard — multi-select for bulk tag/delete, plus the deferred bulk "reprocess all eligible OCR" action from ARCHITECTURE §8
-- thumbnails + in-browser preview — dashboard thumbnails, document-page preview with OCR text side by side (later: search-hit highlighting, pairs with full-text search)
+- search-hit highlighting/snippets in the OCR text box — pairs full-text search (023) with the side-by-side preview (025); fuzzy/typo-tolerant search (pg_trgm) is a related, separately-deferred item (see ARCHITECTURE §8, TDR 023/025)
 - email-in ingestion — per-user address to forward bill PDFs to; bigger lift, needs inbound mail handling
 - export / takeout — one zip with all blobs + metadata JSON/CSV
 - 2FA (TOTP) — security pass together with the proper-password-reset item above
