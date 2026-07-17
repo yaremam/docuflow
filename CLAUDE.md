@@ -38,3 +38,17 @@
 - **Mockup Before Implementation:** Any new UI screen or user-facing feature must start with a mockup (an Artifact) before any template/handler code is written. Minor tweaks to existing screens (copy edits, color/spacing fixes) don't require this.
 - Mockups must reuse the approved "ledger and stamp" visual identity (tokens in `static/style.css`: navy ink, slate paper, forest-green stamp accent; Roboto Slab/Fira Sans/Fira Mono) rather than introducing a new design direction.
 - Get explicit sign-off on the mockup before implementing.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues at github.com/yaremam/docuflow, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary (needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix), unchanged. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout — `CONTEXT.md` + `docs/adr/` at the repo root (created lazily by `/domain-modeling`, not yet present). See `docs/agents/domain.md`.
