@@ -142,6 +142,31 @@ async fn two_pages_then_finish_creates_one_pdf_document() {
 }
 
 #[tokio::test]
+async fn finishing_a_scan_records_a_content_hash_synchronously() {
+    let app = common::test_state().await;
+    let user = signed_up_user(&app, "multi.hash@example.com").await;
+    let token = seed_scan_session(&app, &user, 10).await;
+
+    capture_page(&app, &token, "only.jpg", "image/jpeg", JPEG_PAGE).await;
+    let finished = finish(&app, &token).await;
+    assert_eq!(finished.status(), axum::http::StatusCode::OK);
+
+    let session = session_by_token(&app, &token).await;
+    let document_id = session.document_id.expect("finished session should record its document");
+
+    let doc = sqlx::query!("select blob_key, content_hash from documents where id = $1", document_id)
+        .fetch_one(&app.state.pool)
+        .await
+        .unwrap();
+    let pdf_bytes = app.state.blob.get_object(&doc.blob_key).await.expect("document blob should exist");
+    assert_eq!(
+        doc.content_hash,
+        Some(docuflow::content_hash::hash_bytes(&pdf_bytes)),
+        "a scan-assembled document should get the same synchronous content_hash as a direct upload, feature 029"
+    );
+}
+
+#[tokio::test]
 async fn single_page_scan_still_works_end_to_end() {
     let app = common::test_state().await;
     let user = signed_up_user(&app, "multi.single.page@example.com").await;

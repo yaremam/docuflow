@@ -257,6 +257,19 @@ pub struct DocumentShowTemplate {
     /// still empty — same "one condition, not two" shape as
     /// `suggested_date_issued_display` (TDR 024, mirroring TDR 012).
     pub suggested_doc_type_display: Option<&'static str>,
+    /// `Some` only immediately after upload (`uploaded == true`) when this
+    /// document's content exactly matches an earlier one — a one-shot
+    /// warning, never shown again on a later plain visit (feature 029,
+    /// TDR 029 §3 Alternative E).
+    pub duplicate_of: Option<DuplicateMatch>,
+}
+
+/// The oldest earlier document sharing this one's exact content hash —
+/// see `DocumentShowTemplate::duplicate_of`.
+pub struct DuplicateMatch {
+    pub id: uuid::Uuid,
+    pub title: String,
+    pub uploaded_at: String,
 }
 
 #[derive(askama::Template, askama_web::WebTemplate)]

@@ -26,8 +26,8 @@ use crate::web::state::AppState;
 use crate::web::tenancy::TenantContext;
 use crate::web::templates::{
     AppliedFilterChip, BulkDeleteDocumentSummary, CollectionOption, DocTypeFacetOption, DocumentBulkDeleteConfirmTemplate,
-    DocumentDeleteTemplate, DocumentListItem, DocumentNewTemplate, DocumentShowTemplate, DocumentsListTemplate, LanguageFacetOption,
-    MonthFacetOption, TagFacetOption, YearFacetOption,
+    DocumentDeleteTemplate, DocumentListItem, DocumentNewTemplate, DocumentShowTemplate, DocumentsListTemplate, DuplicateMatch,
+    LanguageFacetOption, MonthFacetOption, TagFacetOption, YearFacetOption,
 };
 
 /// Also used by the router to size its `DefaultBodyLimit` layer — kept as
@@ -907,6 +907,7 @@ struct DocumentRow {
     doc_type: Option<String>,
     ocr_suggested_doc_type: Option<String>,
     created_at: time::OffsetDateTime,
+    content_hash: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -941,7 +942,7 @@ pub async fn show(
         DocumentRow,
         r#"select id, title, original_filename, content_type, file_size_bytes, blob_key, tags, date_issued,
                   ocr_suggested_date_issued, ocr_status, ocr_text, language, doc_type, ocr_suggested_doc_type,
-                  created_at
+                  created_at, content_hash
            from documents
            where id = $1 and tenant_id = $2"#,
         id,
@@ -990,6 +991,32 @@ pub async fn show(
     let highlighting_query = has_highlight.then(|| search_text.unwrap_or_default().to_string());
     let ocr_text_html = marked_ocr_text.as_deref().map(crate::highlight::render_marked);
 
+    // A one-shot check, gated on `uploaded` — both ingestion paths
+    // (desktop upload, phone scan) redirect here with `?uploaded=true`
+    // right after creating this document, and never again afterward, so
+    // this doubles as the "only warn once" rule with no extra state
+    // (feature 029, TDR 029 §3 Alternative E).
+    let duplicate_of = match (query.uploaded, &row.content_hash) {
+        (true, Some(hash)) => sqlx::query!(
+            "select id, title, original_filename, created_at
+             from documents
+             where tenant_id = $1 and content_hash = $2 and id != $3
+             order by created_at asc
+             limit 1",
+            tenancy.tenant_id.0,
+            hash,
+            row.id,
+        )
+        .fetch_optional(&state.pool)
+        .await?
+        .map(|match_row| DuplicateMatch {
+            id: match_row.id,
+            title: match_row.title.unwrap_or(match_row.original_filename),
+            uploaded_at: format_date(match_row.created_at.date()),
+        }),
+        _ => None,
+    };
+
     Ok(DocumentShowTemplate {
         active_tab: "documents",
         authenticated: true,
@@ -1017,6 +1044,7 @@ pub async fn show(
         doc_type: row.doc_type.unwrap_or_default(),
         doc_type_options: crate::doc_type_extract::dropdown_options(),
         suggested_doc_type_display,
+        duplicate_of,
     })
 }
 
@@ -1554,6 +1582,13 @@ async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: 
         None => "failed",
     };
 
+    // Backfills `content_hash` for a document uploaded before feature 029
+    // (or reprocessed for any other reason) — `None` only when the blob
+    // fetch itself failed, in which case `coalesce` below preserves
+    // whatever hash, if any, was already recorded rather than clobbering
+    // it with null over a transient fetch error.
+    let content_hash = blob_bytes.as_ref().ok().map(|bytes| crate::content_hash::hash_bytes(bytes));
+
     let update_result = match text_result {
         Ok(text) => {
             let ocr_suggested_date_issued = crate::date_extract::extract_issued_date(&text);
@@ -1564,7 +1599,8 @@ async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: 
             let suggested_doc_type = crate::doc_type_extract::extract_doc_type(&text).map(|dt| dt.as_str());
             sqlx::query!(
                 "update documents set ocr_status = 'done', ocr_text = $3, ocr_suggested_date_issued = $4,
-                        language = coalesce(language, $5), ocr_suggested_doc_type = $6, thumbnail_status = $7
+                        language = coalesce(language, $5), ocr_suggested_doc_type = $6, thumbnail_status = $7,
+                        content_hash = coalesce($8, content_hash)
                  where id = $1 and tenant_id = $2",
                 document_id,
                 tenant_id,
@@ -1573,6 +1609,7 @@ async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: 
                 language,
                 suggested_doc_type,
                 thumbnail_status,
+                content_hash,
             )
             .execute(&state.pool)
             .await
@@ -1580,11 +1617,14 @@ async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: 
         Err(error_message) => {
             tracing::error!(error = %error_message, "ocr extraction failed");
             sqlx::query!(
-                "update documents set ocr_status = 'failed', ocr_error = $3, thumbnail_status = $4 where id = $1 and tenant_id = $2",
+                "update documents set ocr_status = 'failed', ocr_error = $3, thumbnail_status = $4,
+                        content_hash = coalesce($5, content_hash)
+                 where id = $1 and tenant_id = $2",
                 document_id,
                 tenant_id,
                 error_message,
                 thumbnail_status,
+                content_hash,
             )
             .execute(&state.pool)
             .await
@@ -1597,7 +1637,10 @@ async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: 
 }
 
 /// Streams `field` to blob storage under `documents/{user_id}/{document_id}`
-/// and returns the resulting byte count. Split out from
+/// and returns the resulting byte count plus a hex-encoded SHA-256 of its
+/// content (feature 029's duplicate detection — computed in the same pass
+/// `BlobStore::stream_upload_with_hash` already reads chunks in for its
+/// byte-count check, no second read). Split out from
 /// `insert_document_and_queue_ocr` below specifically so `create`'s
 /// "metadata fields must arrive before the file field" check can still
 /// reject a request (with no document row ever created) even *after* this
@@ -1605,24 +1648,18 @@ async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: 
 /// encountered (multipart bodies can't be rewound to check what follows
 /// first), so only the upload is unavoidable in that rejected case, never
 /// the DB row; the S3 object it leaves behind is an accepted, harmless
-/// orphan (nothing ever references it). Also called directly by
-/// `web::handlers::scan::submit_scan` (feature 009's phone-camera capture),
-/// which has no metadata fields that could invalidate an already-streamed
-/// file, so it has no need for a combined convenience wrapper — it just
-/// calls this and `insert_document_and_queue_ocr` back to back itself.
+/// orphan (nothing ever references it).
 pub(crate) async fn stream_document_to_blob(
     state: &AppState,
     user_id: Uuid,
     document_id: Uuid,
     content_type: &str,
     field: axum::extract::multipart::Field<'_>,
-) -> Result<(String, i64), AppWebError> {
+) -> Result<(String, i64, String), AppWebError> {
     let blob_key = format!("documents/{user_id}/{document_id}");
-    let file_size_bytes = state
-        .blob
-        .stream_upload(&blob_key, content_type, field, MAX_DOCUMENT_BYTES)
-        .await?;
-    Ok((blob_key, file_size_bytes as i64))
+    let (file_size_bytes, content_hash) =
+        state.blob.stream_upload_with_hash(&blob_key, content_type, field, MAX_DOCUMENT_BYTES).await?;
+    Ok((blob_key, file_size_bytes as i64, content_hash))
 }
 
 /// Inserts the document row for an already-blob-stored upload and queues its
@@ -1645,14 +1682,15 @@ pub(crate) async fn insert_document_and_queue_ocr(
     title: Option<String>,
     tags: Vec<String>,
     date_issued: Option<time::Date>,
+    content_hash: String,
 ) -> Result<(), AppWebError> {
     let is_ocr_eligible = ocr_eligible(&content_type);
     let initial_ocr_status = if is_ocr_eligible { "pending" } else { "skipped" };
 
     sqlx::query!(
         "insert into documents
-            (id, tenant_id, user_id, original_filename, title, content_type, file_size_bytes, blob_key, tags, date_issued, ocr_status)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            (id, tenant_id, user_id, original_filename, title, content_type, file_size_bytes, blob_key, tags, date_issued, ocr_status, content_hash)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         document_id,
         tenant_id,
         user_id,
@@ -1664,6 +1702,7 @@ pub(crate) async fn insert_document_and_queue_ocr(
         &tags,
         date_issued,
         initial_ocr_status,
+        content_hash,
     )
     .execute(&state.pool)
     .await?;
@@ -1687,11 +1726,12 @@ pub async fn create(
     let mut title = ProfileField::default();
     let mut tags = Tags::default();
     let mut date_issued = DateIssuedField::default();
-    // (blob_key, original_filename, content_type, file_size_bytes) — the DB
-    // insert is deferred until after the whole multipart body has validated
-    // (see `stream_document_to_blob`'s doc comment), so this just remembers
-    // what to insert once we know no later field will reject the request.
-    let mut uploaded: Option<(String, String, String, i64)> = None;
+    // (blob_key, original_filename, content_type, file_size_bytes,
+    // content_hash) — the DB insert is deferred until after the whole
+    // multipart body has validated (see `stream_document_to_blob`'s doc
+    // comment), so this just remembers what to insert once we know no
+    // later field will reject the request.
+    let mut uploaded: Option<(String, String, String, i64, String)> = None;
     let document_id = Uuid::new_v4();
 
     while let Some(field) = multipart.next_field().await? {
@@ -1734,15 +1774,15 @@ pub async fn create(
                 {
                     return Ok(bad_request("unsupported file type"));
                 }
-                let (blob_key, file_size_bytes) =
+                let (blob_key, file_size_bytes, content_hash) =
                     stream_document_to_blob(&state, tenancy.user_id.0, document_id, &content_type, field).await?;
-                uploaded = Some((blob_key, original_filename, content_type, file_size_bytes));
+                uploaded = Some((blob_key, original_filename, content_type, file_size_bytes, content_hash));
             }
             _ => {}
         }
     }
 
-    let Some((blob_key, original_filename, content_type, file_size_bytes)) = uploaded else {
+    let Some((blob_key, original_filename, content_type, file_size_bytes, content_hash)) = uploaded else {
         return Ok(bad_request("no file provided"));
     };
 
@@ -1758,6 +1798,7 @@ pub async fn create(
         title.into_option(),
         tags.into_vec(),
         date_issued.into_option(),
+        content_hash,
     )
     .await?;
 

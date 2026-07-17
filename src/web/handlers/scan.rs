@@ -312,6 +312,10 @@ pub async fn finish_scan(
 
     let document_id = Uuid::new_v4();
     let blob_key = format!("documents/{}/{}", row.user_id, document_id);
+    // Computed before `pdf_bytes` moves into `upload_bytes` below — feature
+    // 029's duplicate detection, same synchronous-at-upload-time approach
+    // as the desktop upload path (`documents::stream_document_to_blob`).
+    let content_hash = crate::content_hash::hash_bytes(&pdf_bytes);
     let file_size_bytes = state.blob.upload_bytes(&blob_key, "application/pdf", pdf_bytes).await? as i64;
     insert_document_and_queue_ocr(
         &state,
@@ -325,6 +329,7 @@ pub async fn finish_scan(
         None,
         Vec::new(),
         None,
+        content_hash,
     )
     .await?;
 

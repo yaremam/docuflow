@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select id, title, original_filename, content_type, file_size_bytes, blob_key, tags, date_issued,\n                  ocr_suggested_date_issued, ocr_status, ocr_text, language, doc_type, ocr_suggested_doc_type,\n                  created_at\n           from documents\n           where id = $1 and tenant_id = $2",
+  "query": "select id, title, original_filename, content_type, file_size_bytes, blob_key, tags, date_issued,\n                  ocr_suggested_date_issued, ocr_status, ocr_text, language, doc_type, ocr_suggested_doc_type,\n                  created_at, content_hash\n           from documents\n           where id = $1 and tenant_id = $2",
   "describe": {
     "columns": [
       {
@@ -77,6 +77,11 @@
         "ordinal": 14,
         "name": "created_at",
         "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 15,
+        "name": "content_hash",
+        "type_info": "Text"
       }
     ],
     "parameters": {
@@ -100,8 +105,9 @@
       true,
       true,
       true,
-      false
+      false,
+      true
     ]
   },
-  "hash": "4e77877a2bd03ead2816220af4e508ee8d8da78bdf25ba92402875607de2a103"
+  "hash": "21e78d516551c010f9f421862b9c2c45ad2b3b09c47831b375da861d997e3b5d"
 }

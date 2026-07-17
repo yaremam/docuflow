@@ -118,6 +118,44 @@ async fn reprocessing_a_skipped_document_runs_ocr_for_the_first_time() {
 }
 
 #[tokio::test]
+async fn reprocessing_backfills_content_hash_for_a_document_uploaded_before_this_feature() {
+    if !tesseract_available() {
+        eprintln!("skipping reprocessing_backfills_content_hash_for_a_document_uploaded_before_this_feature: `tesseract` not found on PATH");
+        return;
+    }
+
+    let app = common::test_state().await;
+    let uploaded = common::upload_and_wait_for_ocr(
+        &app,
+        "hashbackfill.docs@example.com",
+        "tests/fixtures/ocr_sample.png",
+        "ocr_sample.png",
+        "image/png",
+    )
+    .await;
+    assert_eq!(uploaded.outcome.status, "done");
+
+    // Simulate a document uploaded before `content_hash` existed (feature 029).
+    sqlx::query!("update documents set content_hash = null where id = $1", uploaded.id).execute(&app.state.pool).await.unwrap();
+
+    let response = common::post_with_cookie(&app, &format!("/documents/{}/reprocess_ocr", uploaded.id), &uploaded.cookie).await;
+    assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
+
+    common::wait_for_ocr_outcome(&app, uploaded.id, std::time::Duration::from_secs(10)).await;
+
+    let bytes = std::fs::read("tests/fixtures/ocr_sample.png").unwrap();
+    let content_hash = sqlx::query_scalar!("select content_hash from documents where id = $1", uploaded.id)
+        .fetch_one(&app.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        content_hash,
+        Some(docuflow::content_hash::hash_bytes(&bytes)),
+        "reprocessing should backfill content_hash from the document's actual blob bytes"
+    );
+}
+
+#[tokio::test]
 async fn reprocess_button_is_shown_for_done_failed_and_skipped_but_not_while_processing() {
     let app = common::test_state().await;
     let login = common::signup_and_login(&app, "reprocessbutton.docs@example.com", "documentspassword").await;

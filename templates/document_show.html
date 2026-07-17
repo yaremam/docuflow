@@ -18,6 +18,9 @@
   {% else if saved %}
   <p class="form-success">Saved.</p>
   {% endif %}
+  {% if let Some(duplicate_of) = duplicate_of %}
+  <p class="form-error">You already uploaded a file with this exact content on {{ duplicate_of.uploaded_at }} &mdash; see <a href="/documents/{{ duplicate_of.id }}">{{ duplicate_of.title }}</a>.</p>
+  {% endif %}
   <div class="detail-grid">
     <div class="detail-preview-col">
       <div class="card" data-tab="Original file">

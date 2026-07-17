@@ -2,9 +2,7 @@
 - batch feature 018's per-facet-option count queries into fewer round trips if page-load latency ever becomes a real complaint (deliberately deferred out of 018, see TDR 018 §2 Alternative B)
 - non-English month names in date_extract.rs — already on ARCHITECTURE §8 deferred list; improves date-suggestion hit rate for Cyrillic/German/Dutch documents
 - expiry dates + renewal reminders — date_expires column with OCR suggestion (reuse 012's pattern), "expiring soon" dashboard strip, reminder emails via existing mailer/Mailpit stack
-- duplicate detection — hash file bytes on upload, warn "you already uploaded this on …"
 - trash / soft delete with restore — delete is currently permanent; 30-day trash
-- search-hit highlighting/snippets in the OCR text box — pairs full-text search (023) with the side-by-side preview (025); fuzzy/typo-tolerant search (pg_trgm) is a related, separately-deferred item (see ARCHITECTURE §8, TDR 023/025)
 - email-in ingestion — per-user address to forward bill PDFs to; bigger lift, needs inbound mail handling
 - export / takeout — one zip with all blobs + metadata JSON/CSV
 - 2FA (TOTP) — security pass together with the proper-password-reset item above

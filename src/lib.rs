@@ -1,4 +1,5 @@
 pub mod blob;
+pub mod content_hash;
 pub mod date_extract;
 pub mod doc_type_extract;
 pub mod domain;

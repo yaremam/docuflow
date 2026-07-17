@@ -18,6 +18,7 @@ use aws_sdk_s3::presigning::PresigningConfig;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_smithy_types::byte_stream::ByteStream;
 use axum::extract::multipart::{Field, MultipartError};
+use sha2::{Digest, Sha256};
 
 /// S3's minimum part size for all but the final part of a multipart upload.
 const PART_SIZE: usize = 5 * 1024 * 1024;
@@ -133,15 +134,31 @@ impl BlobStore {
     /// Streams `field` to S3 and returns the total number of bytes uploaded
     /// (already tracked internally for the `max_bytes` check, so callers
     /// that need the final size — e.g. to populate a `file_size_bytes`
-    /// column — don't need a second read).
+    /// column — don't need a second read). Thin wrapper over
+    /// `stream_upload_with_hash` that discards its hash — for callers
+    /// (profile pictures, individual scan pages) that have no use for a
+    /// content fingerprint; kept as one shared loop rather than two,
+    /// since hashing a stream already being read is negligible cost
+    /// either way.
     #[tracing::instrument(skip(self, field))]
-    pub async fn stream_upload(
+    pub async fn stream_upload(&self, key: &str, content_type: &str, field: Field<'_>, max_bytes: usize) -> Result<usize, BlobError> {
+        let (total, _hash) = self.stream_upload_with_hash(key, content_type, field, max_bytes).await?;
+        Ok(total)
+    }
+
+    /// Same as `stream_upload`, but also returns a hex-encoded SHA-256 of
+    /// the uploaded bytes (feature 029's duplicate detection) — computed
+    /// in the same per-chunk loop this already runs for its byte-count
+    /// check, so a document upload never needs a second read of its
+    /// bytes just to fingerprint them.
+    #[tracing::instrument(skip(self, field))]
+    pub async fn stream_upload_with_hash(
         &self,
         key: &str,
         content_type: &str,
         mut field: Field<'_>,
         max_bytes: usize,
-    ) -> Result<usize, BlobError> {
+    ) -> Result<(usize, String), BlobError> {
         let create = self
             .client
             .create_multipart_upload()
@@ -160,6 +177,7 @@ impl BlobStore {
         let mut completed_parts = Vec::new();
         let mut buf: Vec<u8> = Vec::with_capacity(PART_SIZE);
         let mut total = 0usize;
+        let mut hasher = Sha256::new();
 
         while let Some(chunk) = field.chunk().await? {
             total += chunk.len();
@@ -177,6 +195,7 @@ impl BlobStore {
                     .await;
                 return Err(BlobError::TooLarge(max_bytes));
             }
+            hasher.update(&chunk);
             buf.extend_from_slice(&chunk);
             if buf.len() >= PART_SIZE {
                 // `mem::replace` (not `mem::take`) so the next part's buffer
@@ -210,7 +229,7 @@ impl BlobStore {
             .await
             .map_err(s3_err)?;
 
-        Ok(total)
+        Ok((total, crate::content_hash::finalize_hex(hasher)))
     }
 
     async fn upload_part(

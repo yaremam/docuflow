@@ -296,6 +296,199 @@ async fn get_documents_new_reaches_the_new_document_form_not_show() {
     assert!(body.contains("action=\"/documents\""));
 }
 
+async fn content_hash_for(app: &common::TestApp, id: uuid::Uuid) -> Option<String> {
+    sqlx::query_scalar!("select content_hash from documents where id = $1", id).fetch_one(&app.state.pool).await.unwrap()
+}
+
+#[tokio::test]
+async fn content_hash_is_recorded_synchronously_at_upload_time() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "hash.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+
+    let bytes: &[u8] = b"a distinctive fake pdf body";
+    let response = common::post_multipart_parts_with_cookie(
+        &app,
+        "/documents",
+        &cookie,
+        &[MultipartPart::File { name: "file", filename: "a.pdf", content_type: "application/pdf", bytes }],
+    )
+    .await;
+    let id = common::document_id_from_location(&common::location(&response).expect("upload should redirect"));
+
+    let hash = content_hash_for(&app, id).await;
+    assert_eq!(
+        hash,
+        Some(docuflow::content_hash::hash_bytes(bytes)),
+        "content_hash should be set synchronously at upload time, not only once background OCR/backfill runs"
+    );
+}
+
+#[tokio::test]
+async fn uploading_identical_bytes_twice_flags_the_second_as_a_duplicate() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "dup.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let bytes: &[u8] = b"identical content uploaded twice";
+
+    let first_response = common::post_multipart_parts_with_cookie(
+        &app,
+        "/documents",
+        &cookie,
+        &[MultipartPart::File { name: "file", filename: "first.pdf", content_type: "application/pdf", bytes }],
+    )
+    .await;
+    let first_location = common::location(&first_response).expect("upload should redirect");
+    let first_id = common::document_id_from_location(&first_location);
+
+    // The very first upload has nothing to match against yet.
+    let first_page = common::get_with_cookie(&app, &first_location, &cookie).await;
+    let first_body = common::body_string(first_page).await;
+    assert!(!first_body.contains("already uploaded"), "first upload of its content shouldn't warn about itself, got: {first_body}");
+
+    let second_response = common::post_multipart_parts_with_cookie(
+        &app,
+        "/documents",
+        &cookie,
+        &[MultipartPart::File { name: "file", filename: "second.pdf", content_type: "application/pdf", bytes }],
+    )
+    .await;
+    let second_location = common::location(&second_response).expect("upload should redirect");
+
+    let second_page = common::get_with_cookie(&app, &second_location, &cookie).await;
+    let second_body = common::body_string(second_page).await;
+    assert!(second_body.contains("already uploaded"), "second upload of identical content should warn, got: {second_body}");
+    assert!(
+        second_body.contains(&format!("/documents/{first_id}")),
+        "warning should link to the first (original) document, got: {second_body}"
+    );
+}
+
+#[tokio::test]
+async fn uploading_different_bytes_shows_no_duplicate_warning() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "nodup.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+
+    common::post_multipart_parts_with_cookie(
+        &app,
+        "/documents",
+        &cookie,
+        &[MultipartPart::File { name: "file", filename: "a.pdf", content_type: "application/pdf", bytes: b"content A" }],
+    )
+    .await;
+
+    let second_response = common::post_multipart_parts_with_cookie(
+        &app,
+        "/documents",
+        &cookie,
+        &[MultipartPart::File { name: "file", filename: "b.pdf", content_type: "application/pdf", bytes: b"content B, totally different" }],
+    )
+    .await;
+    let second_location = common::location(&second_response).expect("upload should redirect");
+    let second_page = common::get_with_cookie(&app, &second_location, &cookie).await;
+    let body = common::body_string(second_page).await;
+    assert!(!body.contains("already uploaded"), "different content shouldn't warn, got: {body}");
+}
+
+#[tokio::test]
+async fn duplicate_warning_is_shown_once_not_on_a_later_plain_visit() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "onceonly.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let bytes: &[u8] = b"seen once content";
+
+    common::post_multipart_parts_with_cookie(
+        &app,
+        "/documents",
+        &cookie,
+        &[MultipartPart::File { name: "file", filename: "first.pdf", content_type: "application/pdf", bytes }],
+    )
+    .await;
+    let second_response = common::post_multipart_parts_with_cookie(
+        &app,
+        "/documents",
+        &cookie,
+        &[MultipartPart::File { name: "file", filename: "second.pdf", content_type: "application/pdf", bytes }],
+    )
+    .await;
+    let second_id = common::document_id_from_location(&common::location(&second_response).unwrap());
+
+    // Visiting again later, without the `uploaded=true` flag, shouldn't
+    // repeat the one-shot warning (AC-2).
+    let revisit = common::get_with_cookie(&app, &format!("/documents/{second_id}"), &cookie).await;
+    let body = common::body_string(revisit).await;
+    assert!(!body.contains("already uploaded"), "a later plain visit shouldn't repeat the one-shot warning, got: {body}");
+}
+
+#[tokio::test]
+async fn duplicate_warning_points_to_the_oldest_matching_upload() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "oldest.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let bytes: &[u8] = b"uploaded three separate times";
+
+    let first_response = common::post_multipart_parts_with_cookie(
+        &app,
+        "/documents",
+        &cookie,
+        &[MultipartPart::File { name: "file", filename: "one.pdf", content_type: "application/pdf", bytes }],
+    )
+    .await;
+    let first_id = common::document_id_from_location(&common::location(&first_response).unwrap());
+
+    common::post_multipart_parts_with_cookie(
+        &app,
+        "/documents",
+        &cookie,
+        &[MultipartPart::File { name: "file", filename: "two.pdf", content_type: "application/pdf", bytes }],
+    )
+    .await;
+
+    let third_response = common::post_multipart_parts_with_cookie(
+        &app,
+        "/documents",
+        &cookie,
+        &[MultipartPart::File { name: "file", filename: "three.pdf", content_type: "application/pdf", bytes }],
+    )
+    .await;
+    let third_location = common::location(&third_response).unwrap();
+
+    let third_page = common::get_with_cookie(&app, &third_location, &cookie).await;
+    let body = common::body_string(third_page).await;
+    assert!(body.contains(&format!("/documents/{first_id}")), "warning should link to the oldest match, got: {body}");
+}
+
+#[tokio::test]
+async fn duplicate_detection_is_scoped_to_tenant() {
+    let app = common::test_state().await;
+    let bytes: &[u8] = b"shared content across two different tenants";
+
+    let login_a = common::signup_and_login(&app, "duptenant.a@example.com", "documentspassword").await;
+    let cookie_a = common::session_cookie(&login_a).expect("login should set a session cookie");
+    common::post_multipart_parts_with_cookie(
+        &app,
+        "/documents",
+        &cookie_a,
+        &[MultipartPart::File { name: "file", filename: "a.pdf", content_type: "application/pdf", bytes }],
+    )
+    .await;
+
+    let login_b = common::signup_and_login(&app, "duptenant.b@example.com", "documentspassword").await;
+    let cookie_b = common::session_cookie(&login_b).expect("login should set a session cookie");
+    let response_b = common::post_multipart_parts_with_cookie(
+        &app,
+        "/documents",
+        &cookie_b,
+        &[MultipartPart::File { name: "file", filename: "b.pdf", content_type: "application/pdf", bytes }],
+    )
+    .await;
+    let location_b = common::location(&response_b).unwrap();
+    let page_b = common::get_with_cookie(&app, &location_b, &cookie_b).await;
+    let body_b = common::body_string(page_b).await;
+    assert!(!body_b.contains("already uploaded"), "a different tenant's identical content shouldn't trigger a warning, got: {body_b}");
+}
+
 #[tokio::test]
 async fn image_upload_is_actually_ocrd_by_tesseract() {
     if !common::command_on_path("tesseract") {
