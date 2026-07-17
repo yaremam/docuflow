@@ -787,6 +787,36 @@ a { color: inherit; }
   color: var(--stamp);
 }
 
+/* ---- search-hit snippets and highlighting (feature 027) ---- */
+.doc-row-snippet {
+  margin-top: 0.45rem;
+  padding-left: 0.6rem;
+  border-left: 2px solid color-mix(in srgb, var(--stamp) 45%, var(--line));
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+.doc-row-snippet mark,
+.detail-text-box mark {
+  background: color-mix(in srgb, var(--stamp) 22%, var(--paper-raised));
+  color: var(--ink);
+  border-radius: 3px;
+  padding: 0 0.15em;
+  font-weight: 700;
+}
+.q-pill {
+  display: inline-flex;
+  align-items: center;
+  font-family: 'Fira Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 0.2rem 0.7rem;
+  margin-bottom: 0.6rem;
+}
+
 /* ---- document type (feature 024) ---- */
 .doctype-chip {
   display: inline-flex;

@@ -206,7 +206,7 @@
             <label class="doc-row-select">
               <input type="checkbox" name="doc_ids" value="{{ doc.id }}" aria-label="Select {{ doc.title }}">
             </label>
-            <a class="doc-row-main" href="/documents/{{ doc.id }}">
+            <a class="doc-row-main" href="/documents/{{ doc.id }}{{ detail_link_query }}">
               {% if let Some(thumbnail_url) = doc.thumbnail_url %}
               <div class="doc-thumb"><img src="{{ thumbnail_url }}" alt=""></div>
               {% else if doc.is_image %}
@@ -245,6 +245,9 @@
                     Uploaded {{ doc.uploaded_at }}
                   </span>
                 </div>
+                {% if let Some(snippet) = doc.ocr_snippet_html %}
+                <div class="doc-row-snippet">{{ snippet|safe }}</div>
+                {% endif %}
               </div>
             </a>
             <a class="doc-row-delete" href="/documents/{{ doc.id }}/delete" aria-label="Delete {{ doc.title }}" title="Delete document">

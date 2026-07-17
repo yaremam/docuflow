@@ -1,0 +1,99 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, doc_type, thumbnail_status, created_at,\n                          case when $9::text is not null and ocr_search @@ websearch_to_tsquery('simple', $9)\n                               then ts_headline('simple', ocr_text, websearch_to_tsquery('simple', $9), $12)\n                          end as ocr_snippet\n                   from documents\n                   where tenant_id = $1\n                     and (($2::text[] is null or tags && $2)\n                          or ($9::text is not null and ocr_search @@ websearch_to_tsquery('simple', $9)))\n                     and (cardinality($3::text[]) = 0 or tags @> $3)\n                     and (($4::int4 is null and $6 = false)\n                          or ($4::int4 is not null and extract(year from date_issued)::int4 = $4\n                              and ($5::int4 is null or extract(month from date_issued)::int4 = $5))\n                          or ($6 and date_issued is null))\n                     and ((cardinality($7::text[]) = 0 and $8 = false)\n                          or (language = any($7))\n                          or ($8 and language is null))\n                     and ((cardinality($10::text[]) = 0 and $11 = false)\n                          or (doc_type = any($10))\n                          or ($11 and doc_type is null))\n                   order by date_issued desc nulls last",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "original_filename",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "content_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "blob_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "tags",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 6,
+        "name": "date_issued",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 7,
+        "name": "ocr_status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "doc_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "thumbnail_status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "ocr_snippet",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "TextArray",
+        "TextArray",
+        "Int4",
+        "Int4",
+        "Bool",
+        "TextArray",
+        "Bool",
+        "Text",
+        "TextArray",
+        "Bool",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+      null
+    ]
+  },
+  "hash": "36fcaadc193826bf798e8643daf7ee9b7f5b0f851f78795e4325c1cbcd3751e1"
+}

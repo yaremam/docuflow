@@ -170,6 +170,11 @@ struct DocumentListRow {
     doc_type: Option<String>,
     thumbnail_status: Option<String>,
     created_at: time::OffsetDateTime,
+    /// A `ts_headline`-marked excerpt (feature 027), only when this row's
+    /// *OCR text* — not merely its tags — matched the active free-text
+    /// search; `render_marked` below turns the control-character markers
+    /// this carries into safe `<mark>`-wrapped HTML.
+    ocr_snippet: Option<String>,
 }
 
 /// `Default` lets a saved collection's stored query string (feature 016)
@@ -429,12 +434,17 @@ pub async fn list(
     // on this page, not just the ordering). The facet conditions ($3-$11)
     // are identical across all five arms — see TDR 015 §3 for what each
     // one means (§7's log covers $9's free-text search, feature 023;
-    // $10/$11's doc_type facet, feature 024).
+    // $10/$11's doc_type facet, feature 024; $12 is `ts_headline`'s options
+    // string reusing $9's tsquery to build the `ocr_snippet` column,
+    // feature 027 — see TDR 027 §3).
     let rows = match sort {
         Sort::CreatedAtDesc => {
             sqlx::query_as!(
                 DocumentListRow,
-                r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, doc_type, thumbnail_status, created_at
+                r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, doc_type, thumbnail_status, created_at,
+                          case when $9::text is not null and ocr_search @@ websearch_to_tsquery('simple', $9)
+                               then ts_headline('simple', ocr_text, websearch_to_tsquery('simple', $9), $12)
+                          end as ocr_snippet
                    from documents
                    where tenant_id = $1
                      and (($2::text[] is null or tags && $2)
@@ -462,6 +472,7 @@ pub async fn list(
                 search_text,
                 doc_type_values.as_slice(),
                 doc_type_unset,
+                crate::highlight::SNIPPET_OPTIONS,
             )
             .fetch_all(&state.pool)
             .await?
@@ -469,7 +480,10 @@ pub async fn list(
         Sort::CreatedAtAsc => {
             sqlx::query_as!(
                 DocumentListRow,
-                r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, doc_type, thumbnail_status, created_at
+                r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, doc_type, thumbnail_status, created_at,
+                          case when $9::text is not null and ocr_search @@ websearch_to_tsquery('simple', $9)
+                               then ts_headline('simple', ocr_text, websearch_to_tsquery('simple', $9), $12)
+                          end as ocr_snippet
                    from documents
                    where tenant_id = $1
                      and (($2::text[] is null or tags && $2)
@@ -497,6 +511,7 @@ pub async fn list(
                 search_text,
                 doc_type_values.as_slice(),
                 doc_type_unset,
+                crate::highlight::SNIPPET_OPTIONS,
             )
             .fetch_all(&state.pool)
             .await?
@@ -504,7 +519,10 @@ pub async fn list(
         Sort::DateIssuedDesc => {
             sqlx::query_as!(
                 DocumentListRow,
-                r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, doc_type, thumbnail_status, created_at
+                r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, doc_type, thumbnail_status, created_at,
+                          case when $9::text is not null and ocr_search @@ websearch_to_tsquery('simple', $9)
+                               then ts_headline('simple', ocr_text, websearch_to_tsquery('simple', $9), $12)
+                          end as ocr_snippet
                    from documents
                    where tenant_id = $1
                      and (($2::text[] is null or tags && $2)
@@ -532,6 +550,7 @@ pub async fn list(
                 search_text,
                 doc_type_values.as_slice(),
                 doc_type_unset,
+                crate::highlight::SNIPPET_OPTIONS,
             )
             .fetch_all(&state.pool)
             .await?
@@ -539,7 +558,10 @@ pub async fn list(
         Sort::DateIssuedAsc => {
             sqlx::query_as!(
                 DocumentListRow,
-                r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, doc_type, thumbnail_status, created_at
+                r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, doc_type, thumbnail_status, created_at,
+                          case when $9::text is not null and ocr_search @@ websearch_to_tsquery('simple', $9)
+                               then ts_headline('simple', ocr_text, websearch_to_tsquery('simple', $9), $12)
+                          end as ocr_snippet
                    from documents
                    where tenant_id = $1
                      and (($2::text[] is null or tags && $2)
@@ -567,6 +589,7 @@ pub async fn list(
                 search_text,
                 doc_type_values.as_slice(),
                 doc_type_unset,
+                crate::highlight::SNIPPET_OPTIONS,
             )
             .fetch_all(&state.pool)
             .await?
@@ -574,7 +597,10 @@ pub async fn list(
         Sort::TagsAsc => {
             sqlx::query_as!(
                 DocumentListRow,
-                r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, doc_type, thumbnail_status, created_at
+                r#"select id, title, original_filename, content_type, blob_key, tags, date_issued, ocr_status, doc_type, thumbnail_status, created_at,
+                          case when $9::text is not null and ocr_search @@ websearch_to_tsquery('simple', $9)
+                               then ts_headline('simple', ocr_text, websearch_to_tsquery('simple', $9), $12)
+                          end as ocr_snippet
                    from documents
                    where tenant_id = $1
                      and (($2::text[] is null or tags && $2)
@@ -602,6 +628,7 @@ pub async fn list(
                 search_text,
                 doc_type_values.as_slice(),
                 doc_type_unset,
+                crate::highlight::SNIPPET_OPTIONS,
             )
             .fetch_all(&state.pool)
             .await?
@@ -633,6 +660,7 @@ pub async fn list(
             uploaded_at: format_date(row.created_at.date()),
             ocr_status: row.ocr_status,
             doc_type_label,
+            ocr_snippet_html: row.ocr_snippet.as_deref().map(crate::highlight::render_marked),
         });
     }
 
@@ -943,6 +971,12 @@ pub async fn list(
     let can_save_search = query_has_active_filters(&query);
     let save_search_query =
         build_query_string(&query.q, sort.as_str(), &query.tags, date_year, date_month, query.undated, &query.lang, &query.doc_type);
+    // Carries the active free-text search into a result row's link to its
+    // detail page (feature 027), so `/documents/{id}` knows what to
+    // highlight in the OCR text box — a document reached any other way
+    // (direct link, dashboard row with no active search) gets no `?q=`
+    // suffix and renders unchanged (TDR 027 §3, AC-4/AC-7).
+    let detail_link_query = search_text.map(|text| format!("?q={}", url_encode(text))).unwrap_or_default();
 
     Ok(DocumentsListTemplate {
         active_tab: "documents",
@@ -963,6 +997,7 @@ pub async fn list(
         collections,
         can_save_search,
         save_search_query,
+        detail_link_query,
     })
 }
 
@@ -992,9 +1027,18 @@ pub struct ShowQuery {
     uploaded: bool,
     #[serde(default)]
     reprocessing: bool,
+    /// The free-text search that led here (feature 027) — carried along
+    /// by a search-results row's link, or typed directly into this page's
+    /// own URL; either way, highlighting is a pure function of this
+    /// value alone (TDR 027 §3, AC-5).
+    #[serde(default)]
+    q: String,
 }
 
-#[tracing::instrument(skip(state, tenancy))]
+/// `query` now carries a free-text value in `q` — same PII rule `list`'s
+/// span already applies to its own `q` (feature 023 AC-9); skipped here
+/// too rather than let it flow into this span by default.
+#[tracing::instrument(skip(state, tenancy, query))]
 pub async fn show(
     tenancy: TenantContext,
     State(state): State<AppState>,
@@ -1029,6 +1073,33 @@ pub async fn show(
     let suggested_doc_type_display =
         if row.doc_type.is_none() { row.ocr_suggested_doc_type.as_deref().and_then(crate::doc_type_extract::label_for) } else { None };
 
+    // A `ts_headline` round-trip only when there's both text to search and
+    // a search to run — with no `q`, this is just `row.ocr_text` again, so
+    // a plain visit still renders exactly as it did before this feature
+    // (AC-7). Reuses `free_text_search`'s trim/empty-check, the same rule
+    // `list`'s own `q` already follows (feature 023).
+    let search_text = free_text_search(&query.q);
+    let marked_ocr_text = match (search_text, row.ocr_text.as_deref()) {
+        (Some(search_text), Some(ocr_text)) => Some(
+            sqlx::query_scalar!(
+                "select ts_headline('simple', $1, websearch_to_tsquery('simple', $2), $3)",
+                ocr_text,
+                search_text,
+                crate::highlight::FULL_TEXT_OPTIONS,
+            )
+            .fetch_one(&state.pool)
+            .await?
+            .unwrap_or_default(),
+        ),
+        _ => row.ocr_text.clone(),
+    };
+    // Gates the "Highlighting matches for ..." indicator — only shown
+    // once something in *this* document actually matched, never for a
+    // `q` that happens not to appear here (AC-6).
+    let has_highlight = marked_ocr_text.as_deref().is_some_and(crate::highlight::has_match);
+    let highlighting_query = has_highlight.then(|| search_text.unwrap_or_default().to_string());
+    let ocr_text_html = marked_ocr_text.as_deref().map(crate::highlight::render_marked);
+
     Ok(DocumentShowTemplate {
         active_tab: "documents",
         authenticated: true,
@@ -1048,7 +1119,8 @@ pub async fn show(
         suggested_date_issued_display,
         uploaded_at: format_date(row.created_at.date()),
         ocr_status: row.ocr_status,
-        ocr_text: row.ocr_text,
+        ocr_text_html,
+        highlighting_query,
         language: row.language.unwrap_or_default(),
         supported_language_options: crate::languages::supported_options(),
         other_language_options: crate::languages::other_options(),

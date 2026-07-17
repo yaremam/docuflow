@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select ts_headline('simple', $1, websearch_to_tsquery('simple', $2), $3)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ts_headline",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "7a3cb6917235367f4efcdb7c47212fe79ae1a1451a91d44f4133691baf10d394"
+}

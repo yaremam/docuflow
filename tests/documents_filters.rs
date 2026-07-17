@@ -244,6 +244,60 @@ async fn free_text_ocr_search_combines_with_an_active_tags_facet() {
 }
 
 #[tokio::test]
+async fn free_text_search_result_shows_a_highlighted_snippet_from_matching_ocr_text() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "snippet.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "snippet.docs@example.com").await;
+
+    let doc = seed_document(&app.state.pool, user, "electric_bill.pdf", &["bill"], None, None).await;
+    set_ocr_text(&app.state.pool, doc, "Springfield Electric Company annual statement for March").await;
+
+    let response = common::get_with_cookie(&app, "/documents?q=electric+company", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("doc-row-snippet"), "expected a snippet line under the matching row, got: {body}");
+    assert!(body.contains("<mark>Electric</mark>"), "expected the matched word marked in the snippet, got: {body}");
+    assert!(body.contains("<mark>Company</mark>"), "expected the matched word marked in the snippet, got: {body}");
+}
+
+#[tokio::test]
+async fn free_text_search_result_matched_via_tag_overlap_only_shows_no_snippet() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "nosnippet.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "nosnippet.docs@example.com").await;
+
+    // Matches q via the search box's own comma-parsed tag-overlap (feature
+    // 023's `parse_tag_search`), not via its OCR text — no OCR hit means
+    // no excerpt to show (AC-2).
+    let doc = seed_document(&app.state.pool, user, "renewal_notice.pdf", &["electric company"], None, None).await;
+    set_ocr_text(&app.state.pool, doc, "Your policy is due for renewal next month").await;
+
+    let response = common::get_with_cookie(&app, "/documents?q=electric+company", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("renewal_notice.pdf"), "expected the doc to match via tag overlap, got: {body}");
+    assert!(!body.contains("doc-row-snippet"), "a tag-only match shouldn't render a snippet line, got: {body}");
+}
+
+#[tokio::test]
+async fn free_text_search_result_link_carries_q_into_the_detail_page() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "carryq.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "carryq.docs@example.com").await;
+
+    let doc = seed_document(&app.state.pool, user, "electric_bill2.pdf", &["bill"], None, None).await;
+    set_ocr_text(&app.state.pool, doc, "Electric Company statement").await;
+
+    let response = common::get_with_cookie(&app, "/documents?q=electric+company", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(
+        body.contains(&format!("/documents/{doc}?q=electric%20company")),
+        "expected the row's link to carry the active search q through to the detail page, got: {body}"
+    );
+}
+
+#[tokio::test]
 async fn language_facet_filters_by_selected_language() {
     let app = common::test_state().await;
     let login = common::signup_and_login(&app, "langfacet.docs@example.com", "documentspassword").await;

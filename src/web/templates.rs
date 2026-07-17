@@ -88,6 +88,11 @@ pub struct DocumentListItem {
     pub uploaded_at: String,
     pub ocr_status: String,
     pub doc_type_label: Option<&'static str>,
+    /// Pre-rendered safe HTML (feature 027) — `Some` only when this row's
+    /// OCR text, not merely its tags, matched the active free-text
+    /// search; already escaped and `<mark>`-wrapped by
+    /// `highlight::render_marked`, rendered with `|safe`.
+    pub ocr_snippet_html: Option<String>,
 }
 
 /// One checkbox in the Tags facet group (see TDR 015 §3) — `count` is
@@ -191,6 +196,10 @@ pub struct DocumentsListTemplate {
     /// "Save this search" form's hidden `query` field — the exact state
     /// a saved collection will bookmark.
     pub save_search_query: String,
+    /// `"?q=<url-encoded search text>"`, or `""` when no free-text search
+    /// is active (feature 027) — appended to every row's link into
+    /// `/documents/{id}` so the detail page knows what to highlight.
+    pub detail_link_query: String,
 }
 
 #[derive(askama::Template, askama_web::WebTemplate)]
@@ -219,7 +228,16 @@ pub struct DocumentShowTemplate {
     pub suggested_date_issued_display: Option<String>,
     pub uploaded_at: String,
     pub ocr_status: String,
-    pub ocr_text: Option<String>,
+    /// Pre-rendered safe HTML (feature 027): the extracted text, escaped,
+    /// with any matches for `highlighting_query` wrapped in `<mark>` —
+    /// rendered with `|safe`. With no active `q`, this is just the escaped
+    /// text, byte-identical to what auto-escaping produced pre-027.
+    pub ocr_text_html: Option<String>,
+    /// `Some(search text)` only once something in *this* document's OCR
+    /// text actually matched it — gates the "Highlighting matches for
+    /// ..." indicator so it's never shown for a `q` that doesn't appear
+    /// here (feature 027, TDR 027 §3 AC-6).
+    pub highlighting_query: Option<String>,
     /// `""` or a real ISO 639-1 code — matches the `<select>`'s option
     /// values directly (see TDR 014, generalized by TDR 020), so the
     /// template can compare with `==` rather than needing an `Option` +

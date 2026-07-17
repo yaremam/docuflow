@@ -35,8 +35,11 @@
     </div>
     <div class="detail-ocr-col">
       <div class="card" data-tab="Extracted text">
-        {% if let Some(ocr_text) = ocr_text %}
-        <div class="detail-text-box">{{ ocr_text }}</div>
+        {% if let Some(highlighting_query) = highlighting_query %}
+        <span class="q-pill">Highlighting matches for &ldquo;{{ highlighting_query }}&rdquo;</span>
+        {% endif %}
+        {% if let Some(ocr_text_html) = ocr_text_html %}
+        <div class="detail-text-box">{{ ocr_text_html|safe }}</div>
         {% else if ocr_status == "failed" %}
         <div class="detail-text-box">Text extraction failed for this document.</div>
         {% else if ocr_status == "skipped" %}

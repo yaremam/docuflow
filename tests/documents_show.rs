@@ -54,6 +54,63 @@ async fn view_renders_metadata_and_extracted_text() {
 }
 
 #[tokio::test]
+async fn view_with_a_matching_q_highlights_every_occurrence_in_the_ocr_text() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "highlight.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "highlight.docs@example.com").await;
+    let doc_id = seed_document(
+        &app.state.pool,
+        user,
+        "electric_statement.pdf",
+        Some("This statement covers your Electric Company account. Electric service charges total $142."),
+    )
+    .await;
+
+    let response = common::get_with_cookie(&app, &format!("/documents/{doc_id}?q=electric+company"), &cookie).await;
+
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = common::body_string(response).await;
+    assert!(body.contains("<mark>Electric</mark>"), "expected every occurrence marked, got: {body}");
+    assert!(body.contains("<mark>Company</mark>"), "expected the matched word marked, got: {body}");
+    assert!(body.contains("Highlighting matches"), "expected an indicator stating what's highlighted, got: {body}");
+}
+
+#[tokio::test]
+async fn view_with_no_q_renders_ocr_text_unchanged_with_no_marks() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "nohighlight.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "nohighlight.docs@example.com").await;
+    let doc_id = seed_document(&app.state.pool, user, "plain.pdf", Some("Electric Company account statement")).await;
+
+    let response = common::get_with_cookie(&app, &format!("/documents/{doc_id}"), &cookie).await;
+
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = common::body_string(response).await;
+    assert!(body.contains("Electric Company account statement"), "expected the plain OCR text, got: {body}");
+    assert!(!body.contains("<mark>"), "no q means no highlighting, got: {body}");
+    assert!(!body.contains("Highlighting matches"), "no q means no highlighting indicator, got: {body}");
+}
+
+#[tokio::test]
+async fn view_with_a_non_matching_q_shows_no_marks_or_indicator() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "missnomatch.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "missnomatch.docs@example.com").await;
+    let doc_id = seed_document(&app.state.pool, user, "unrelated.pdf", Some("Acme Water Utility statement")).await;
+
+    let response = common::get_with_cookie(&app, &format!("/documents/{doc_id}?q=electric+company"), &cookie).await;
+
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = common::body_string(response).await;
+    assert!(body.contains("Acme Water Utility statement"), "expected the plain OCR text, got: {body}");
+    assert!(!body.contains("<mark>"), "q that doesn't appear in this doc shouldn't mark anything, got: {body}");
+    assert!(!body.contains("Highlighting matches"), "no match means no misleading indicator, got: {body}");
+}
+
+#[tokio::test]
 async fn view_renders_an_image_preview_with_a_presigned_url() {
     let app = common::test_state().await;
     let login = common::signup_and_login(&app, "imgpreview.docs@example.com", "documentspassword").await;
