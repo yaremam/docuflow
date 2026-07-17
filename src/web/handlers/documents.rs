@@ -20,14 +20,14 @@ use uuid::Uuid;
 
 use crate::web::error::AppWebError;
 use crate::web::facets::{assemble_facet_options, ActiveFilters};
-use crate::web::forms::{CollectionName, DateIssuedField, DocTypeField, Language, ProfileField, Tags};
+use crate::web::forms::{CollectionName, DateExpiresField, DateIssuedField, DocTypeField, Language, ProfileField, Tags};
 use crate::web::nav;
 use crate::web::state::AppState;
 use crate::web::tenancy::TenantContext;
 use crate::web::templates::{
     AppliedFilterChip, BulkDeleteDocumentSummary, CollectionOption, DocTypeFacetOption, DocumentBulkDeleteConfirmTemplate,
     DocumentDeleteTemplate, DocumentListItem, DocumentNewTemplate, DocumentShowTemplate, DocumentsListTemplate, DuplicateMatch,
-    LanguageFacetOption, MonthFacetOption, TagFacetOption, YearFacetOption,
+    ExpiringDocument, ExpiryStatusFacetOption, LanguageFacetOption, MonthFacetOption, TagFacetOption, YearFacetOption,
 };
 
 /// Also used by the router to size its `DefaultBodyLimit` layer — kept as
@@ -191,6 +191,10 @@ pub struct ListQuery {
     /// `date_issued`).
     #[serde(default)]
     doc_type: Vec<String>,
+    /// `"expired"`/`"soon"`/`"later"`/`"unset"` — OR-combined (feature
+    /// 031, TDR 031 §3).
+    #[serde(default)]
+    expiry_status: Vec<String>,
 }
 
 const MONTH_NAMES: [&str; 12] =
@@ -243,6 +247,9 @@ fn build_query_string(active: &ActiveFilters, sort: &str) -> String {
     for value in &active.doc_type {
         params.push(("doc_type", value.clone()));
     }
+    for value in &active.expiry_status {
+        params.push(("expiry_status", value.clone()));
+    }
 
     params.iter().map(|(key, value)| format!("{key}={}", url_encode(value))).collect::<Vec<_>>().join("&")
 }
@@ -264,7 +271,16 @@ fn build_documents_url(active: &ActiveFilters, sort: &str) -> String {
 /// one place `list`, `count_matching_documents`, and `save_collection` all
 /// build this from the same raw query-param shape, so they can't drift.
 fn active_filters(query: &ListQuery) -> ActiveFilters {
-    ActiveFilters::new(query.q.clone(), query.tags.clone(), query.date_year, query.date_month, query.undated, query.lang.clone(), query.doc_type.clone())
+    ActiveFilters::new(
+        query.q.clone(),
+        query.tags.clone(),
+        query.date_year,
+        query.date_month,
+        query.undated,
+        query.lang.clone(),
+        query.doc_type.clone(),
+        query.expiry_status.clone(),
+    )
 }
 
 /// The "no dimension narrowed" `FacetFilters` view of the request's
@@ -283,7 +299,20 @@ fn base_facet_filters(active: &ActiveFilters) -> FacetFilters<'_> {
         search_text: active.search_text(),
         doc_type_values: active.doc_type_values(),
         doc_type_unset: active.doc_type_unset(),
+        expiry_status_values: &active.expiry_status,
     }
+}
+
+/// `doc_type_extract::EXPIRY_ELIGIBLE_DOC_TYPES` converted once to the
+/// owned `Vec<String>` shape Postgres `text[]` binding needs — every one
+/// of the `expiry_status` facet's four buckets scopes to this same fixed
+/// set (feature 031, TDR 031 §3): "No expiry set" only counts eligible
+/// documents missing `date_expires`, and "Expired"/"Expiring soon"/
+/// "Later" only ever have a `date_expires` in practice for the same
+/// eligible types anyway, so scoping all four uniformly keeps the facet's
+/// candidate population well-defined as one set.
+fn expiry_eligible_doc_types() -> Vec<String> {
+    crate::doc_type_extract::EXPIRY_ELIGIBLE_DOC_TYPES.iter().map(|s| s.to_string()).collect()
 }
 
 /// Counts documents matching an arbitrary filter set — the same
@@ -320,9 +349,11 @@ struct FacetFilters<'a> {
     search_text: Option<&'a str>,
     doc_type_values: &'a [String],
     doc_type_unset: bool,
+    expiry_status_values: &'a [String],
 }
 
 async fn count_documents(state: &AppState, tenant_id: Uuid, facets: FacetFilters<'_>) -> Result<i64, AppWebError> {
+    let expiry_eligible = expiry_eligible_doc_types();
     let count = sqlx::query_scalar!(
         "select count(*) from documents
          where tenant_id = $1
@@ -338,7 +369,12 @@ async fn count_documents(state: &AppState, tenant_id: Uuid, facets: FacetFilters
                 or ($8 and language is null))
            and ((cardinality($10::text[]) = 0 and $11 = false)
                 or (doc_type = any($10))
-                or ($11 and doc_type is null))",
+                or ($11 and doc_type is null))
+           and (cardinality($12::text[]) = 0
+                or ('expired' = any($12) and date_expires < current_date and doc_type = any($13))
+                or ('soon' = any($12) and date_expires >= current_date and date_expires <= current_date + 14 and doc_type = any($13))
+                or ('later' = any($12) and date_expires > current_date + 14 and doc_type = any($13))
+                or ('unset' = any($12) and date_expires is null and doc_type = any($13)))",
         tenant_id,
         facets.q_tags,
         facets.facet_tags,
@@ -350,6 +386,8 @@ async fn count_documents(state: &AppState, tenant_id: Uuid, facets: FacetFilters
         facets.search_text,
         facets.doc_type_values,
         facets.doc_type_unset,
+        facets.expiry_status_values,
+        &expiry_eligible,
     )
     .fetch_one(&state.pool)
     .await?
@@ -385,7 +423,9 @@ pub async fn list(
     // one means (§7's log covers $9's free-text search, feature 023;
     // $10/$11's doc_type facet, feature 024; $12 is `ts_headline`'s options
     // string reusing $9's tsquery to build the `ocr_snippet` column,
-    // feature 027 — see TDR 027 §3).
+    // feature 027 — see TDR 027 §3; $13/$14 are the expiry_status facet's
+    // selected buckets and the fixed expiry-eligible doc_type set, feature
+    // 031 — see TDR 031 §3).
     let rows = match sort {
         Sort::CreatedAtDesc => {
             sqlx::query_as!(
@@ -409,6 +449,11 @@ pub async fn list(
                      and ((cardinality($10::text[]) = 0 and $11 = false)
                           or (doc_type = any($10))
                           or ($11 and doc_type is null))
+                     and (cardinality($13::text[]) = 0
+                          or ('expired' = any($13) and date_expires < current_date and doc_type = any($14))
+                          or ('soon' = any($13) and date_expires >= current_date and date_expires <= current_date + 14 and doc_type = any($14))
+                          or ('later' = any($13) and date_expires > current_date + 14 and doc_type = any($14))
+                          or ('unset' = any($13) and date_expires is null and doc_type = any($14)))
                    order by created_at desc"#,
                 tenancy.tenant_id.0,
                 active.q_tags(),
@@ -422,6 +467,8 @@ pub async fn list(
                 active.doc_type_values(),
                 active.doc_type_unset(),
                 crate::highlight::SNIPPET_OPTIONS,
+                active.expiry_status.as_slice(),
+                &expiry_eligible_doc_types(),
             )
             .fetch_all(&state.pool)
             .await?
@@ -448,6 +495,11 @@ pub async fn list(
                      and ((cardinality($10::text[]) = 0 and $11 = false)
                           or (doc_type = any($10))
                           or ($11 and doc_type is null))
+                     and (cardinality($13::text[]) = 0
+                          or ('expired' = any($13) and date_expires < current_date and doc_type = any($14))
+                          or ('soon' = any($13) and date_expires >= current_date and date_expires <= current_date + 14 and doc_type = any($14))
+                          or ('later' = any($13) and date_expires > current_date + 14 and doc_type = any($14))
+                          or ('unset' = any($13) and date_expires is null and doc_type = any($14)))
                    order by created_at asc"#,
                 tenancy.tenant_id.0,
                 active.q_tags(),
@@ -461,6 +513,8 @@ pub async fn list(
                 active.doc_type_values(),
                 active.doc_type_unset(),
                 crate::highlight::SNIPPET_OPTIONS,
+                active.expiry_status.as_slice(),
+                &expiry_eligible_doc_types(),
             )
             .fetch_all(&state.pool)
             .await?
@@ -487,6 +541,11 @@ pub async fn list(
                      and ((cardinality($10::text[]) = 0 and $11 = false)
                           or (doc_type = any($10))
                           or ($11 and doc_type is null))
+                     and (cardinality($13::text[]) = 0
+                          or ('expired' = any($13) and date_expires < current_date and doc_type = any($14))
+                          or ('soon' = any($13) and date_expires >= current_date and date_expires <= current_date + 14 and doc_type = any($14))
+                          or ('later' = any($13) and date_expires > current_date + 14 and doc_type = any($14))
+                          or ('unset' = any($13) and date_expires is null and doc_type = any($14)))
                    order by date_issued desc nulls last"#,
                 tenancy.tenant_id.0,
                 active.q_tags(),
@@ -500,6 +559,8 @@ pub async fn list(
                 active.doc_type_values(),
                 active.doc_type_unset(),
                 crate::highlight::SNIPPET_OPTIONS,
+                active.expiry_status.as_slice(),
+                &expiry_eligible_doc_types(),
             )
             .fetch_all(&state.pool)
             .await?
@@ -526,6 +587,11 @@ pub async fn list(
                      and ((cardinality($10::text[]) = 0 and $11 = false)
                           or (doc_type = any($10))
                           or ($11 and doc_type is null))
+                     and (cardinality($13::text[]) = 0
+                          or ('expired' = any($13) and date_expires < current_date and doc_type = any($14))
+                          or ('soon' = any($13) and date_expires >= current_date and date_expires <= current_date + 14 and doc_type = any($14))
+                          or ('later' = any($13) and date_expires > current_date + 14 and doc_type = any($14))
+                          or ('unset' = any($13) and date_expires is null and doc_type = any($14)))
                    order by date_issued asc nulls last"#,
                 tenancy.tenant_id.0,
                 active.q_tags(),
@@ -539,6 +605,8 @@ pub async fn list(
                 active.doc_type_values(),
                 active.doc_type_unset(),
                 crate::highlight::SNIPPET_OPTIONS,
+                active.expiry_status.as_slice(),
+                &expiry_eligible_doc_types(),
             )
             .fetch_all(&state.pool)
             .await?
@@ -565,6 +633,11 @@ pub async fn list(
                      and ((cardinality($10::text[]) = 0 and $11 = false)
                           or (doc_type = any($10))
                           or ($11 and doc_type is null))
+                     and (cardinality($13::text[]) = 0
+                          or ('expired' = any($13) and date_expires < current_date and doc_type = any($14))
+                          or ('soon' = any($13) and date_expires >= current_date and date_expires <= current_date + 14 and doc_type = any($14))
+                          or ('later' = any($13) and date_expires > current_date + 14 and doc_type = any($14))
+                          or ('unset' = any($13) and date_expires is null and doc_type = any($14)))
                    order by array_to_string(tags, ',') asc"#,
                 tenancy.tenant_id.0,
                 active.q_tags(),
@@ -578,6 +651,8 @@ pub async fn list(
                 active.doc_type_values(),
                 active.doc_type_unset(),
                 crate::highlight::SNIPPET_OPTIONS,
+                active.expiry_status.as_slice(),
+                &expiry_eligible_doc_types(),
             )
             .fetch_all(&state.pool)
             .await?
@@ -790,6 +865,33 @@ pub async fn list(
         checked: active.doc_type_unset(),
     });
 
+    // Expiry status facet (feature 031) — four fixed status buckets, not
+    // distinct stored column values, so there's no `select distinct`
+    // discovery step here (see TDR 031 §3): each candidate's narrowed
+    // count still goes through the same discover-then-narrow-count shape
+    // as every other facet, just with a hardcoded candidate list.
+    const EXPIRY_STATUS_OPTIONS: &[(&str, &str)] =
+        &[("expired", "Expired"), ("soon", "Expiring soon"), ("later", "Later"), ("unset", "No expiry set")];
+    let mut expiry_status_counts = Vec::with_capacity(EXPIRY_STATUS_OPTIONS.len());
+    for (value, _label) in EXPIRY_STATUS_OPTIONS.iter().copied() {
+        let value_owned = value.to_string();
+        let count = count_documents(
+            &state,
+            tenancy.tenant_id.0,
+            FacetFilters { expiry_status_values: std::slice::from_ref(&value_owned), ..base_facet_filters(&active) },
+        )
+        .await?;
+        expiry_status_counts.push((value, count));
+    }
+    let expiry_status_facets = assemble_facet_options(
+        expiry_status_counts,
+        |value| active.expiry_status.iter().any(|v| v == value),
+        |value, count, checked| {
+            let label = EXPIRY_STATUS_OPTIONS.iter().find(|(v, _)| *v == value).map(|(_, l)| *l).unwrap_or("");
+            ExpiryStatusFacetOption { value, label, count, checked }
+        },
+    );
+
     // Each chip is "the current active state, with just this one value
     // removed" — built by cloning `active` and mutating its raw fields
     // directly. Safe here specifically because `build_documents_url`/
@@ -834,6 +936,16 @@ pub async fn list(
         };
         applied_filters.push(AppliedFilterChip { label, remove_href: build_documents_url(&remaining, sort.as_str()) });
     }
+    for expiry_status_value in &active.expiry_status {
+        let mut remaining = active.clone();
+        remaining.expiry_status.retain(|v| v != expiry_status_value);
+        let label = EXPIRY_STATUS_OPTIONS
+            .iter()
+            .find(|(v, _)| v == expiry_status_value)
+            .map(|(_, l)| l.to_string())
+            .unwrap_or_else(|| expiry_status_value.clone());
+        applied_filters.push(AppliedFilterChip { label, remove_href: build_documents_url(&remaining, sort.as_str()) });
+    }
 
     let clear_filters_href = active.has_active_facets().then(|| {
         let mut cleared = active.clone();
@@ -843,6 +955,7 @@ pub async fn list(
         cleared.undated = false;
         cleared.lang.clear();
         cleared.doc_type.clear();
+        cleared.expiry_status.clear();
         build_documents_url(&cleared, sort.as_str())
     });
 
@@ -868,6 +981,37 @@ pub async fn list(
     // suffix and renders unchanged (TDR 027 §3, AC-4/AC-7).
     let detail_link_query = active.search_text().map(|text| format!("?q={}", url_encode(text))).unwrap_or_default();
 
+    // Dashboard "expiring soon" strip (feature 031) — computed from the
+    // tenant's full expiry-eligible set, independent of whatever facets/
+    // search are currently active on the results below it (TDR 031 §3/§4).
+    let expiring_rows = sqlx::query!(
+        "select id, title, original_filename, date_expires
+         from documents
+         where tenant_id = $1 and doc_type = any($2) and date_expires is not null and date_expires <= current_date + 14
+         order by date_expires asc",
+        tenancy.tenant_id.0,
+        &expiry_eligible_doc_types(),
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let today = time::OffsetDateTime::now_utc().date();
+    let expiring_documents: Vec<ExpiringDocument> = expiring_rows
+        .into_iter()
+        .filter_map(|row| {
+            let date_expires = row.date_expires?;
+            let days = (date_expires - today).whole_days();
+            let (status_label, is_expired) = if days < 0 {
+                let ago = -days;
+                (format!("Expired {ago} day{} ago", if ago == 1 { "" } else { "s" }), true)
+            } else if days == 0 {
+                ("Expires today".to_string(), false)
+            } else {
+                (format!("Expires in {days} day{}", if days == 1 { "" } else { "s" }), false)
+            };
+            Some(ExpiringDocument { id: row.id, title: row.title.unwrap_or(row.original_filename), status_label, is_expired })
+        })
+        .collect();
+
     Ok(DocumentsListTemplate {
         active_tab: "documents",
         authenticated: true,
@@ -875,6 +1019,7 @@ pub async fn list(
         q: query.q,
         sort: sort.as_str(),
         deleted: query.deleted,
+        expiring_documents,
         documents,
         tag_facets,
         year_facets,
@@ -882,6 +1027,7 @@ pub async fn list(
         undated_checked: query.undated,
         language_facets,
         doc_type_facets,
+        expiry_status_facets,
         applied_filters,
         clear_filters_href,
         collections,
@@ -908,6 +1054,8 @@ struct DocumentRow {
     ocr_suggested_doc_type: Option<String>,
     created_at: time::OffsetDateTime,
     content_hash: Option<String>,
+    date_expires: Option<time::Date>,
+    ocr_suggested_date_expires: Option<time::Date>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -942,7 +1090,7 @@ pub async fn show(
         DocumentRow,
         r#"select id, title, original_filename, content_type, file_size_bytes, blob_key, tags, date_issued,
                   ocr_suggested_date_issued, ocr_status, ocr_text, language, doc_type, ocr_suggested_doc_type,
-                  created_at, content_hash
+                  created_at, content_hash, date_expires, ocr_suggested_date_expires
            from documents
            where id = $1 and tenant_id = $2"#,
         id,
@@ -963,6 +1111,12 @@ pub async fn show(
     // into the human-facing text the suggestion box shows.
     let suggested_doc_type_display =
         if row.doc_type.is_none() { row.ocr_suggested_doc_type.as_deref().and_then(crate::doc_type_extract::label_for) } else { None };
+    // Gates both the Expires field's visibility and its suggestion box —
+    // the *confirmed* doc_type only, never the unaccepted
+    // `ocr_suggested_doc_type` (feature 031, TDR 031 §3, AC-1).
+    let is_expiry_eligible = row.doc_type.as_deref().is_some_and(crate::doc_type_extract::is_expiry_eligible);
+    let suggested_date_expires_display =
+        if row.date_expires.is_none() { row.ocr_suggested_date_expires.map(format_date) } else { None };
 
     // A `ts_headline` round-trip only when there's both text to search and
     // a search to run — with no `q`, this is just `row.ocr_text` again, so
@@ -1045,6 +1199,9 @@ pub async fn show(
         doc_type_options: crate::doc_type_extract::dropdown_options(),
         suggested_doc_type_display,
         duplicate_of,
+        is_expiry_eligible,
+        date_expires_input_value: row.date_expires.map(format_date).unwrap_or_default(),
+        suggested_date_expires_display,
     })
 }
 
@@ -1060,6 +1217,14 @@ pub struct DocumentMetadataForm {
     pub language: Language,
     #[serde(default)]
     pub doc_type: DocTypeField,
+    /// Not cross-validated against `doc_type` here — the field is only
+    /// ever rendered for an eligible `doc_type` (feature 031, TDR 031
+    /// §3), and a directly-posted value on an ineligible document is
+    /// low-stakes, tenant-scoped data with no security implication, same
+    /// trust-boundary judgment already applied to every other field on
+    /// this form.
+    #[serde(default)]
+    pub date_expires: DateExpiresField,
 }
 
 #[tracing::instrument(skip(state, tenancy, form))]
@@ -1070,7 +1235,7 @@ pub async fn update(
     Form(form): Form<DocumentMetadataForm>,
 ) -> Result<Response, AppWebError> {
     let result = sqlx::query!(
-        "update documents set title = $3, tags = $4, date_issued = $5, language = $6, doc_type = $7, updated_at = now()
+        "update documents set title = $3, tags = $4, date_issued = $5, language = $6, doc_type = $7, date_expires = $8, updated_at = now()
          where id = $1 and tenant_id = $2",
         id,
         tenancy.tenant_id.0,
@@ -1079,6 +1244,7 @@ pub async fn update(
         form.date_issued.into_option(),
         form.language.into_option(),
         form.doc_type.into_option(),
+        form.date_expires.into_option(),
     )
     .execute(&state.pool)
     .await?;
@@ -1150,6 +1316,33 @@ pub async fn accept_suggested_doc_type(
     let result = sqlx::query!(
         "update documents set doc_type = ocr_suggested_doc_type, updated_at = now()
          where id = $1 and tenant_id = $2 and doc_type is null",
+        id,
+        tenancy.tenant_id.0,
+    )
+    .execute(&state.pool)
+    .await?;
+
+    if result.rows_affected() == 0 && !document_exists(&state, id, tenancy.tenant_id.0).await? {
+        return Err(AppWebError::NotFound);
+    }
+
+    Ok(Redirect::to(&format!("/documents/{id}?saved=true")).into_response())
+}
+
+/// Copies `ocr_suggested_date_expires` into `date_expires` — the "Use
+/// this date" action from the suggestion box `show` renders (feature
+/// 031, same idiom as `accept_suggested_date`/`accept_suggested_doc_type`
+/// above, including why the existence check only runs as a fallback on
+/// the 0-rows-affected path).
+#[tracing::instrument(skip(state, tenancy))]
+pub async fn accept_suggested_expiry_date(
+    tenancy: TenantContext,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, AppWebError> {
+    let result = sqlx::query!(
+        "update documents set date_expires = ocr_suggested_date_expires, updated_at = now()
+         where id = $1 and tenant_id = $2 and date_expires is null",
         id,
         tenancy.tenant_id.0,
     )
@@ -1597,10 +1790,11 @@ async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: 
             let suggested_date_issued = ocr_suggested_date_issued.or(exif_suggested_date_issued);
             let language = crate::language_detect::detect(&text);
             let suggested_doc_type = crate::doc_type_extract::extract_doc_type(&text).map(|dt| dt.as_str());
+            let suggested_date_expires = crate::expiry_extract::extract_expiry_date(&text);
             sqlx::query!(
                 "update documents set ocr_status = 'done', ocr_text = $3, ocr_suggested_date_issued = $4,
                         language = coalesce(language, $5), ocr_suggested_doc_type = $6, thumbnail_status = $7,
-                        content_hash = coalesce($8, content_hash)
+                        content_hash = coalesce($8, content_hash), ocr_suggested_date_expires = $9
                  where id = $1 and tenant_id = $2",
                 document_id,
                 tenant_id,
@@ -1610,6 +1804,7 @@ async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: 
                 suggested_doc_type,
                 thumbnail_status,
                 content_hash,
+                suggested_date_expires,
             )
             .execute(&state.pool)
             .await

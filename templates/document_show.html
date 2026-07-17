@@ -112,6 +112,18 @@
             </div>
             {% endif %}
           </div>
+          {% if is_expiry_eligible %}
+          <div class="field">
+            <label for="date_expires">Expires</label>
+            <input id="date_expires" name="date_expires" type="date" value="{{ date_expires_input_value }}">
+            {% if let Some(suggested) = suggested_date_expires_display %}
+            <div class="suggestion">
+              <p>OCR found a possible date: <strong>{{ suggested }}</strong></p>
+              <button class="btn-suggestion" type="submit" formaction="/documents/{{ id }}/accept_suggested_expiry_date" formmethod="post" formnovalidate>Use this date</button>
+            </div>
+            {% endif %}
+          </div>
+          {% endif %}
           <div class="field">
             <label for="language">Language</label>
             <select id="language" name="language">

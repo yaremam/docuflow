@@ -33,6 +33,13 @@ pub struct ActiveFilters {
     pub lang: Vec<String>,
     /// Raw, including the `"unset"` sentinel — same shape as `lang`.
     pub doc_type: Vec<String>,
+    /// `"expired"`/`"soon"`/`"later"`/`"unset"`, OR-combined (feature
+    /// 031) — unlike `lang`/`doc_type`, none of these correspond to a
+    /// literal stored column value (they're all computed from `date_
+    /// expires` vs. today), so there's no separate values/unset split
+    /// here — every string, "unset" included, is just checked directly
+    /// against this same list in SQL (`= any(...)`).
+    pub expiry_status: Vec<String>,
     q_tags: Option<Vec<String>>,
     lang_values: Vec<String>,
     lang_unset: bool,
@@ -50,6 +57,7 @@ impl ActiveFilters {
         undated: bool,
         lang: Vec<String>,
         doc_type: Vec<String>,
+        expiry_status: Vec<String>,
     ) -> Self {
         let q_tags = parse_tag_search(&q);
         let date_month = if date_year.is_some() {
@@ -77,6 +85,7 @@ impl ActiveFilters {
             undated,
             lang,
             doc_type,
+            expiry_status,
             q_tags,
             lang_values,
             lang_unset,
@@ -131,6 +140,7 @@ impl ActiveFilters {
             || self.undated
             || !self.lang.is_empty()
             || !self.doc_type.is_empty()
+            || !self.expiry_status.is_empty()
     }
 }
 
@@ -198,6 +208,7 @@ mod tests {
             false,
             lang.into_iter().map(str::to_string).collect(),
             doc_type.into_iter().map(str::to_string).collect(),
+            vec![],
         )
     }
 
@@ -236,8 +247,16 @@ mod tests {
 
     #[test]
     fn date_month_is_dropped_when_no_year_is_selected() {
-        let active =
-            ActiveFilters::new("".to_string(), vec![], None, Some(3), false, vec![], vec![]);
+        let active = ActiveFilters::new(
+            "".to_string(),
+            vec![],
+            None,
+            Some(3),
+            false,
+            vec![],
+            vec![],
+            vec![],
+        );
         assert_eq!(active.date_month, None);
     }
 
@@ -249,6 +268,7 @@ mod tests {
             Some(2026),
             Some(3),
             false,
+            vec![],
             vec![],
             vec![],
         );

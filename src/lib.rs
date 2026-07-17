@@ -5,6 +5,7 @@ pub mod doc_type_extract;
 pub mod domain;
 pub mod error;
 pub mod exif_extract;
+pub mod expiry_extract;
 pub mod highlight;
 pub mod language_detect;
 pub mod languages;

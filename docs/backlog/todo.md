@@ -1,6 +1,6 @@
 - implement proper password reset
 - batch feature 018's per-facet-option count queries into fewer round trips if page-load latency ever becomes a real complaint (deliberately deferred out of 018, see TDR 018 §2 Alternative B)
-- expiry dates + renewal reminders — date_expires column with OCR suggestion (reuse 012's pattern), "expiring soon" dashboard strip, reminder emails via existing mailer/Mailpit stack
+- extend expiry reminders (031) beyond in-app dashboard strip to email/phone notifications, via existing mailer/Mailpit stack — deliberately deferred out of 031
 - trash / soft delete with restore — delete is currently permanent; 30-day trash
 - email-in ingestion — per-user address to forward bill PDFs to; bigger lift, needs inbound mail handling
 - export / takeout — one zip with all blobs + metadata JSON/CSV

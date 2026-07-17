@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update documents set date_expires = ocr_suggested_date_expires, updated_at = now()\n         where id = $1 and tenant_id = $2 and date_expires is null",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c178ad9e436337b15a72e1d80821638fcc4cb9f4c8b7b7a669c20aea9f16a03c"
+}

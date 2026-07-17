@@ -145,6 +145,19 @@ pub struct DocTypeFacetOption {
     pub checked: bool,
 }
 
+/// One checkbox in the Expiry status facet group (feature 031) — same
+/// OR-within-facet interaction as tags/language/doc_type, but the four
+/// candidates (`"expired"`/`"soon"`/`"later"`/`"unset"`) are fixed status
+/// buckets computed from `date_expires`, not distinct stored column
+/// values, so there's no "discover candidates from the DB" step behind
+/// this one (see TDR 031 §3).
+pub struct ExpiryStatusFacetOption {
+    pub value: &'static str,
+    pub label: &'static str,
+    pub count: i64,
+    pub checked: bool,
+}
+
 /// A single removable chip above the results — `remove_href` is a
 /// pre-built `/documents?...` URL with just this one filter dropped,
 /// computed in the handler (see `build_documents_url`) since Askama has
@@ -174,6 +187,7 @@ pub struct DocumentsListTemplate {
     pub q: String,
     pub sort: &'static str,
     pub deleted: bool,
+    pub expiring_documents: Vec<ExpiringDocument>,
     pub documents: Vec<DocumentListItem>,
     pub tag_facets: Vec<TagFacetOption>,
     pub year_facets: Vec<YearFacetOption>,
@@ -181,6 +195,7 @@ pub struct DocumentsListTemplate {
     pub undated_checked: bool,
     pub language_facets: Vec<LanguageFacetOption>,
     pub doc_type_facets: Vec<DocTypeFacetOption>,
+    pub expiry_status_facets: Vec<ExpiryStatusFacetOption>,
     pub applied_filters: Vec<AppliedFilterChip>,
     /// `None` when no facet is active — the template uses this both to
     /// decide whether to render "Clear all" and to pick between the
@@ -262,6 +277,14 @@ pub struct DocumentShowTemplate {
     /// warning, never shown again on a later plain visit (feature 029,
     /// TDR 029 §3 Alternative E).
     pub duplicate_of: Option<DuplicateMatch>,
+    /// Whether the *confirmed* `doc_type` structurally has an expiry
+    /// date — gates the Expires field's visibility entirely, not just
+    /// its suggestion box (feature 031, TDR 031 §3, AC-1).
+    pub is_expiry_eligible: bool,
+    pub date_expires_input_value: String,
+    /// Same "only when unset" rule as `suggested_date_issued_display`
+    /// (feature 031, mirroring TDR 012).
+    pub suggested_date_expires_display: Option<String>,
 }
 
 /// The oldest earlier document sharing this one's exact content hash —
@@ -270,6 +293,19 @@ pub struct DuplicateMatch {
     pub id: uuid::Uuid,
     pub title: String,
     pub uploaded_at: String,
+}
+
+/// One row in the dashboard's "expiring soon" strip (feature 031) —
+/// computed from the tenant's full expiry-eligible set regardless of
+/// whatever facets/search are currently active on the results below it
+/// (TDR 031 §3/§4).
+pub struct ExpiringDocument {
+    pub id: uuid::Uuid,
+    pub title: String,
+    pub status_label: String,
+    /// Distinguishes the "already expired" (red) vs. "expiring soon"
+    /// (stamp-green) styling the mockup gives these rows.
+    pub is_expired: bool,
 }
 
 #[derive(askama::Template, askama_web::WebTemplate)]

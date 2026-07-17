@@ -32,6 +32,21 @@
     <p class="form-success">Deleted.</p>
     {% endif %}
 
+    {% if !expiring_documents.is_empty() %}
+    <div class="expiring-strip">
+      <div class="expiring-strip-head">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path></svg>
+        <h3>{{ expiring_documents.len() }} document{% if expiring_documents.len() != 1 %}s{% endif %} need{% if expiring_documents.len() == 1 %}s{% endif %} attention</h3>
+      </div>
+      {% for doc in expiring_documents %}
+      <a class="expiring-strip-row" href="/documents/{{ doc.id }}">
+        <span class="expiring-strip-title">{{ doc.title }}</span>
+        <span class="expiring-strip-status{% if doc.is_expired %} is-expired{% else %} is-soon{% endif %}">{{ doc.status_label }}</span>
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+
     {% if documents.is_empty() && clear_filters_href.is_none() %}
     <div class="empty-state">
       <h3>No documents yet</h3>
@@ -151,6 +166,19 @@
               <input type="checkbox" name="doc_type" value="{{ doc_type.value }}"{% if doc_type.checked %} checked{% endif %}>
               <span class="filter-option-label">{{ doc_type.label }}</span>
               <span class="filter-count">{{ doc_type.count }}</span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div class="filter-group">
+          <p class="filter-group-title">Expiry status</p>
+          <div class="filter-options">
+            {% for status in expiry_status_facets %}
+            <label class="filter-option{% if status.checked %} is-checked{% endif %}">
+              <input type="checkbox" name="expiry_status" value="{{ status.value }}"{% if status.checked %} checked{% endif %}>
+              <span class="filter-option-label">{{ status.label }}</span>
+              <span class="filter-count">{{ status.count }}</span>
             </label>
             {% endfor %}
           </div>

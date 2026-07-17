@@ -384,6 +384,48 @@ impl DateIssuedField {
     }
 }
 
+/// A document's expiry date (feature 031) — same blank-means-clear
+/// `YYYY-MM-DD` parsing as `DateIssuedField`, kept as its own newtype
+/// (not a reuse of `DateIssuedField` under another name) for its own
+/// error message and to match this project's one-newtype-per-field
+/// convention (`ProfileField`/`Tags`/`DateIssuedField`/`Language`/
+/// `DocTypeField` are all distinct despite structural overlap).
+#[derive(Debug, Default, Clone, serde::Deserialize)]
+#[serde(try_from = "String")]
+pub struct DateExpiresField(Option<time::Date>);
+
+#[derive(Debug, thiserror::Error)]
+#[error("date expires must be blank or in YYYY-MM-DD format")]
+pub struct DateExpiresFieldError;
+
+impl TryFrom<String> for DateExpiresField {
+    type Error = DateExpiresFieldError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Ok(Self(None));
+        }
+
+        let (year_str, rest) = trimmed.split_once('-').ok_or(DateExpiresFieldError)?;
+        let (month_str, day_str) = rest.split_once('-').ok_or(DateExpiresFieldError)?;
+
+        let year: i32 = year_str.parse().map_err(|_| DateExpiresFieldError)?;
+        let month: u8 = month_str.parse().map_err(|_| DateExpiresFieldError)?;
+        let day: u8 = day_str.parse().map_err(|_| DateExpiresFieldError)?;
+        let month = time::Month::try_from(month).map_err(|_| DateExpiresFieldError)?;
+        let date = time::Date::from_calendar_date(year, month, day).map_err(|_| DateExpiresFieldError)?;
+
+        Ok(Self(Some(date)))
+    }
+}
+
+impl DateExpiresField {
+    pub fn into_option(self) -> Option<time::Date> {
+        self.0
+    }
+}
+
 /// A document's language — any real ISO 639-1 code (see `crate::languages`), not just
 /// the four `ocr::run_tesseract` can actually OCR (feature 020 generalizes feature 014's
 /// closed `en`/`cyr` script-bucket vocabulary). `""` clears the field, mirroring

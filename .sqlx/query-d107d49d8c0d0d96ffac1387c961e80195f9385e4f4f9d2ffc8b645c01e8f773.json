@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select id, title, original_filename, date_expires\n         from documents\n         where tenant_id = $1 and doc_type = any($2) and date_expires is not null and date_expires <= current_date + 14\n         order by date_expires asc",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "original_filename",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "date_expires",
+        "type_info": "Date"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "d107d49d8c0d0d96ffac1387c961e80195f9385e4f4f9d2ffc8b645c01e8f773"
+}

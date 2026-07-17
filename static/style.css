@@ -840,6 +840,45 @@ a { color: inherit; }
   flex-shrink: 0;
 }
 
+/* ---- expiring-soon dashboard strip (feature 031) ---- */
+.expiring-strip {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper-raised);
+  overflow: hidden;
+  margin-bottom: 1.2rem;
+}
+.expiring-strip-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+.expiring-strip-head svg { width: 16px; height: 16px; color: var(--danger); flex-shrink: 0; }
+.expiring-strip-head h3 { margin: 0; font-family: 'Roboto Slab', serif; font-size: 0.88rem; letter-spacing: 0.01em; }
+.expiring-strip-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--line);
+  text-decoration: none;
+  color: inherit;
+}
+.expiring-strip-row:last-child { border-bottom: none; }
+.expiring-strip-row:hover { background: color-mix(in srgb, var(--stamp) 5%, transparent); }
+.expiring-strip-title { font-weight: 700; font-size: 0.85rem; flex: 1; }
+.expiring-strip-status {
+  font-family: 'Fira Mono', monospace;
+  font-size: 0.7rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+.expiring-strip-status.is-expired { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.expiring-strip-status.is-soon { background: color-mix(in srgb, var(--stamp) 14%, transparent); color: var(--stamp); }
+
 /* ---- smart filters panel (feature 015) ---- */
 .filters-layout {
   display: flex;

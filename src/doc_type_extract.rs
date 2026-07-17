@@ -98,6 +98,24 @@ pub fn is_valid(value: &str) -> bool {
     DOC_TYPE_OPTIONS.iter().any(|opt| opt.value == value)
 }
 
+/// The `doc_type` values that structurally have an expiry date at all —
+/// insurance policies and contracts/subscriptions renew or lapse,
+/// receipts/other essentially never carry one; `bill` and `id` are
+/// judgment calls included by explicit direction (feature 031, TDR 031
+/// §3). A `&'static str` slice (not a `Vec`) so it can double as both a
+/// Rust-side predicate source and, converted once at the SQL call site,
+/// a Postgres `text[]` bind parameter for the `expiry_status` facet's
+/// "No expiry set" bucket (`src/web/handlers/documents.rs`).
+pub const EXPIRY_ELIGIBLE_DOC_TYPES: &[&str] = &["insurance", "contract", "bill", "id"];
+
+/// Whether a *confirmed* `doc_type` is one of `EXPIRY_ELIGIBLE_DOC_TYPES`.
+/// Deliberately takes the confirmed `doc_type` column's value, never
+/// `ocr_suggested_doc_type` — every call site should gate on a confirmed
+/// fact, not an unaccepted guess (TDR 031 §3, AC-1).
+pub fn is_expiry_eligible(value: &str) -> bool {
+    EXPIRY_ELIGIBLE_DOC_TYPES.contains(&value)
+}
+
 const KEYWORDS: &[(DocType, &[&str])] = &[
     (
         DocType::Id,
@@ -216,5 +234,24 @@ mod tests {
             extract_doc_type("INVOICE amount DUE now"),
             Some(DocType::Bill)
         );
+    }
+
+    #[test]
+    fn insurance_contract_bill_and_id_are_expiry_eligible() {
+        assert!(is_expiry_eligible("insurance"));
+        assert!(is_expiry_eligible("contract"));
+        assert!(is_expiry_eligible("bill"));
+        assert!(is_expiry_eligible("id"));
+    }
+
+    #[test]
+    fn receipt_and_other_are_not_expiry_eligible() {
+        assert!(!is_expiry_eligible("receipt"));
+        assert!(!is_expiry_eligible("other"));
+    }
+
+    #[test]
+    fn an_unrecognized_value_is_not_expiry_eligible() {
+        assert!(!is_expiry_eligible("not-a-real-doc-type"));
     }
 }

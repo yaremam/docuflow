@@ -160,7 +160,7 @@ fn valid_date(year: i32, month: u8, day: u8) -> Option<Date> {
 /// in the background OCR worker (never a per-request hot path), but free
 /// to avoid. Returns `None` (never panics) in the unreachable case a
 /// hardcoded pattern fails to compile.
-fn cached_regex(
+pub(crate) fn cached_regex(
     cache: &'static OnceLock<Option<regex::Regex>>,
     pattern: &str,
 ) -> Option<&'static regex::Regex> {
@@ -170,7 +170,7 @@ fn cached_regex(
 }
 
 /// `YYYY-MM-DD`, e.g. `2024-03-15`.
-fn find_iso(text: &str) -> Option<Date> {
+pub(crate) fn find_iso(text: &str) -> Option<Date> {
     static RE: OnceLock<Option<regex::Regex>> = OnceLock::new();
     let caps = cached_regex(&RE, r"\b(\d{4})-(\d{2})-(\d{2})\b")?.captures(text)?;
     let year: i32 = caps[1].parse().ok()?;
@@ -195,7 +195,7 @@ fn month_name_alternation() -> &'static str {
 /// 2024` — tried as two shapes of the same underlying pattern (which
 /// capture group is the day vs. the month name changes; everything else
 /// about validating a match is identical).
-fn find_month_name(text: &str) -> Option<Date> {
+pub(crate) fn find_month_name(text: &str) -> Option<Date> {
     static MONTH_FIRST: OnceLock<Option<regex::Regex>> = OnceLock::new();
     static DAY_FIRST: OnceLock<Option<regex::Regex>> = OnceLock::new();
 
@@ -255,7 +255,7 @@ fn lookup_month(name: &str) -> Option<Month> {
 /// `M/D/YYYY` or `M-D-YYYY`. Ambiguous when both numbers are `<= 12`
 /// (assumed US `MM/DD/YYYY`); unambiguous whenever one of the two is `>
 /// 12` (that one must be the day) — see TDR 012 §3.
-fn find_numeric(text: &str) -> Option<Date> {
+pub(crate) fn find_numeric(text: &str) -> Option<Date> {
     static RE: OnceLock<Option<regex::Regex>> = OnceLock::new();
     let caps = cached_regex(&RE, r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b")?.captures(text)?;
     let first: u8 = caps[1].parse().ok()?;

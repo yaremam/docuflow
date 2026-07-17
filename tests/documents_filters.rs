@@ -50,6 +50,16 @@ fn facet_count_after_label(body: &str, label: &str) -> Option<String> {
     Some(after_count_open[..end].to_string())
 }
 
+/// The results-list portion of the page only, excluding the "expiring
+/// soon" strip (feature 031) that precedes it — the strip deliberately
+/// ignores whatever facets/search are active (TDR 031 §3/§4), so a test
+/// asserting on facet-filtered *results* must not accidentally match an
+/// expiry-eligible document the strip renders regardless of the filter.
+fn results_list_html(body: &str) -> &str {
+    let start = body.find("filters-layout").unwrap_or(0);
+    &body[start..]
+}
+
 #[tokio::test]
 async fn tag_facet_narrows_to_documents_with_all_selected_tags() {
     let app = common::test_state().await;
@@ -92,6 +102,22 @@ async fn set_ocr_text(pool: &sqlx::PgPool, document_id: uuid::Uuid, ocr_text: &s
 
 async fn set_doc_type(pool: &sqlx::PgPool, document_id: uuid::Uuid, doc_type: &str) {
     sqlx::query!("update documents set doc_type = $1 where id = $2", doc_type, document_id).execute(pool).await.unwrap();
+}
+
+async fn set_doc_type_and_expiry(pool: &sqlx::PgPool, document_id: uuid::Uuid, doc_type: &str, date_expires: Option<time::Date>) {
+    sqlx::query!(
+        "update documents set doc_type = $1, date_expires = $2 where id = $3",
+        doc_type,
+        date_expires,
+        document_id,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+fn days_from_today(offset: i64) -> time::Date {
+    time::OffsetDateTime::now_utc().date() + time::Duration::days(offset)
 }
 
 #[tokio::test]
@@ -571,5 +597,129 @@ async fn date_facet_counts_narrow_when_a_tag_filter_is_active() {
         facet_count_after_label(&filtered_body, "2026").as_deref(),
         Some("1"),
         "with tags=insurance active, only the insurance 2026 doc should count, got: {filtered_body}"
+    );
+}
+
+#[tokio::test]
+async fn expiry_status_facet_filters_to_expired_documents() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "expiredfacet.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "expiredfacet.docs@example.com").await;
+
+    let expired = seed_document(&app.state.pool, user, "expired.pdf", &[], None, None).await;
+    set_doc_type_and_expiry(&app.state.pool, expired, "insurance", Some(days_from_today(-3))).await;
+    let soon = seed_document(&app.state.pool, user, "soon.pdf", &[], None, None).await;
+    set_doc_type_and_expiry(&app.state.pool, soon, "insurance", Some(days_from_today(5))).await;
+
+    let response = common::get_with_cookie(&app, "/documents?expiry_status=expired", &cookie).await;
+    let body = common::body_string(response).await;
+    let results = results_list_html(&body);
+    assert!(results.contains("expired.pdf"), "expected the expired doc, got: {results}");
+    assert!(!results.contains("soon.pdf"), "the not-yet-expired doc shouldn't match, got: {results}");
+}
+
+#[tokio::test]
+async fn expiry_status_facet_filters_to_expiring_soon_documents() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "soonfacet.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "soonfacet.docs@example.com").await;
+
+    let soon = seed_document(&app.state.pool, user, "soon.pdf", &[], None, None).await;
+    set_doc_type_and_expiry(&app.state.pool, soon, "insurance", Some(days_from_today(10))).await;
+    let later = seed_document(&app.state.pool, user, "later.pdf", &[], None, None).await;
+    set_doc_type_and_expiry(&app.state.pool, later, "insurance", Some(days_from_today(60))).await;
+
+    let response = common::get_with_cookie(&app, "/documents?expiry_status=soon", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("soon.pdf"), "expected the soon-to-expire doc, got: {body}");
+    assert!(!body.contains("later.pdf"), "a doc expiring well beyond the 14-day window shouldn't match, got: {body}");
+}
+
+#[tokio::test]
+async fn expiry_status_facet_filters_to_later_documents() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "laterfacet.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "laterfacet.docs@example.com").await;
+
+    let soon = seed_document(&app.state.pool, user, "soon.pdf", &[], None, None).await;
+    set_doc_type_and_expiry(&app.state.pool, soon, "insurance", Some(days_from_today(10))).await;
+    let later = seed_document(&app.state.pool, user, "later.pdf", &[], None, None).await;
+    set_doc_type_and_expiry(&app.state.pool, later, "insurance", Some(days_from_today(60))).await;
+
+    let response = common::get_with_cookie(&app, "/documents?expiry_status=later", &cookie).await;
+    let body = common::body_string(response).await;
+    let results = results_list_html(&body);
+    assert!(results.contains("later.pdf"), "expected the far-future doc, got: {results}");
+    assert!(!results.contains("soon.pdf"), "a doc within the 14-day window shouldn't match \"later\", got: {results}");
+}
+
+#[tokio::test]
+async fn expiry_status_facet_unset_option_only_counts_eligible_doc_types() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "expiryunsetfacet.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "expiryunsetfacet.docs@example.com").await;
+
+    let insurance_no_expiry = seed_document(&app.state.pool, user, "insurance_no_expiry.pdf", &[], None, None).await;
+    set_doc_type_and_expiry(&app.state.pool, insurance_no_expiry, "insurance", None).await;
+    let receipt_no_expiry = seed_document(&app.state.pool, user, "receipt_no_expiry.pdf", &[], None, None).await;
+    set_doc_type_and_expiry(&app.state.pool, receipt_no_expiry, "receipt", None).await;
+
+    let response = common::get_with_cookie(&app, "/documents?expiry_status=unset", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("insurance_no_expiry.pdf"), "expected the eligible doc missing an expiry date, got: {body}");
+    assert!(!body.contains("receipt_no_expiry.pdf"), "a receipt (ineligible type) shouldn't count toward \"No expiry set\", got: {body}");
+}
+
+#[tokio::test]
+async fn expiry_status_facet_ors_multiple_selected_values() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "expiryorfacet.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "expiryorfacet.docs@example.com").await;
+
+    let expired = seed_document(&app.state.pool, user, "expired.pdf", &[], None, None).await;
+    set_doc_type_and_expiry(&app.state.pool, expired, "insurance", Some(days_from_today(-3))).await;
+    let soon = seed_document(&app.state.pool, user, "soon.pdf", &[], None, None).await;
+    set_doc_type_and_expiry(&app.state.pool, soon, "insurance", Some(days_from_today(5))).await;
+    let later = seed_document(&app.state.pool, user, "later.pdf", &[], None, None).await;
+    set_doc_type_and_expiry(&app.state.pool, later, "insurance", Some(days_from_today(60))).await;
+
+    let response = common::get_with_cookie(&app, "/documents?expiry_status=expired&expiry_status=soon", &cookie).await;
+    let body = common::body_string(response).await;
+    assert!(body.contains("expired.pdf"));
+    assert!(body.contains("soon.pdf"));
+    assert!(!body.contains("later.pdf"));
+}
+
+#[tokio::test]
+async fn expiry_status_facet_counts_narrow_when_a_tag_filter_is_active() {
+    let app = common::test_state().await;
+    let login = common::signup_and_login(&app, "expirycountnarrow.docs@example.com", "documentspassword").await;
+    let cookie = common::session_cookie(&login).expect("login should set a session cookie");
+    let user = user_id(&app, "expirycountnarrow.docs@example.com").await;
+
+    let expired_tagged = seed_document(&app.state.pool, user, "expired_tagged.pdf", &["urgent"], None, None).await;
+    set_doc_type_and_expiry(&app.state.pool, expired_tagged, "insurance", Some(days_from_today(-3))).await;
+    let expired_untagged = seed_document(&app.state.pool, user, "expired_untagged.pdf", &[], None, None).await;
+    set_doc_type_and_expiry(&app.state.pool, expired_untagged, "insurance", Some(days_from_today(-3))).await;
+
+    let unfiltered = common::get_with_cookie(&app, "/documents", &cookie).await;
+    let unfiltered_body = common::body_string(unfiltered).await;
+    assert_eq!(
+        facet_count_after_label(&unfiltered_body, "Expired").as_deref(),
+        Some("2"),
+        "unfiltered: both expired docs count, got: {unfiltered_body}"
+    );
+
+    let filtered = common::get_with_cookie(&app, "/documents?tags=urgent", &cookie).await;
+    let filtered_body = common::body_string(filtered).await;
+    assert_eq!(
+        facet_count_after_label(&filtered_body, "Expired").as_deref(),
+        Some("1"),
+        "with tags=urgent active, only the tagged expired doc should count, got: {filtered_body}"
     );
 }

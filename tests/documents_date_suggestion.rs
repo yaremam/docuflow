@@ -382,3 +382,38 @@ async fn an_ocr_derived_date_takes_priority_over_a_conflicting_exif_capture_date
         uploaded.outcome.suggested_date_issued
     );
 }
+
+#[tokio::test]
+async fn ordinary_text_with_no_expiry_trigger_phrase_suggests_no_expiry_date() {
+    // Regression coverage for feature 031's run_ocr wiring: extraction
+    // correctness itself is covered by expiry_extract's own unit tests
+    // (no non-English tesseract packs are installed in every dev/CI
+    // environment, so a real-fixture positive case isn't reliably
+    // testable here — this fixture's real OCR'd text, "Statement Date:
+    // March 15, 2024", has no expiry-indicating phrase, so it exercises
+    // the wiring without a false positive).
+    if !tesseract_available() {
+        eprintln!("skipping ordinary_text_with_no_expiry_trigger_phrase_suggests_no_expiry_date: `tesseract` not found on PATH");
+        return;
+    }
+
+    let app = common::test_state().await;
+    let uploaded = common::upload_and_wait_for_ocr(
+        &app,
+        "noexpirytrigger.docs@example.com",
+        "tests/fixtures/dated_sample.png",
+        "dated_sample.png",
+        "image/png",
+    )
+    .await;
+    assert_eq!(uploaded.outcome.status, "done");
+
+    let row = sqlx::query!("select ocr_suggested_date_expires from documents where id = $1", uploaded.id)
+        .fetch_one(&app.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        row.ocr_suggested_date_expires, None,
+        "ordinary issued-date text with no expiry trigger phrase shouldn't produce an expiry suggestion"
+    );
+}
