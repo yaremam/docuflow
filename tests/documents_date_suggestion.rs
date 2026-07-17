@@ -263,6 +263,96 @@ async fn an_exif_capture_date_is_suggested_when_ocr_text_has_no_recognizable_dat
     assert!(body.contains("2026-03-14"));
 }
 
+/// Real-OCR, real-fixture coverage for feature 030's non-English month
+/// names — reuses feature 020's language-detection fixtures rather than
+/// inventing new ones. Unlike the fixture above (whose embedded date is
+/// known and asserted exactly), these fixtures' exact OCR'd text isn't
+/// verifiable in an environment without the `deu`/`nld`/`ukr` tesseract
+/// packs installed (this sandbox has none of them), so these assert only
+/// that *some* date was recognized — proof the non-English month-name
+/// path fired at all — not a specific value. The precise-value unit
+/// tests in `src/date_extract.rs` are what pin down exact correctness.
+#[tokio::test]
+async fn german_text_can_produce_a_date_suggestion() {
+    if !tesseract_available() {
+        eprintln!("skipping german_text_can_produce_a_date_suggestion: `tesseract` not found on PATH");
+        return;
+    }
+    if !common::tesseract_has_lang("deu") {
+        eprintln!("skipping german_text_can_produce_a_date_suggestion: tesseract-ocr-deu (deu.traineddata) not installed");
+        return;
+    }
+
+    let app = common::test_state().await;
+    let uploaded = common::upload_and_wait_for_ocr(
+        &app,
+        "germandate.docs@example.com",
+        "tests/fixtures/german_sample.png",
+        "german_sample.png",
+        "image/png",
+    )
+    .await;
+    assert_eq!(uploaded.outcome.status, "done");
+    assert!(
+        uploaded.outcome.suggested_date_issued.is_some(),
+        "expected a German month name in the fixture's OCR'd text to produce a date suggestion"
+    );
+}
+
+#[tokio::test]
+async fn dutch_text_can_produce_a_date_suggestion() {
+    if !tesseract_available() {
+        eprintln!("skipping dutch_text_can_produce_a_date_suggestion: `tesseract` not found on PATH");
+        return;
+    }
+    if !common::tesseract_has_lang("nld") {
+        eprintln!("skipping dutch_text_can_produce_a_date_suggestion: tesseract-ocr-nld (nld.traineddata) not installed");
+        return;
+    }
+
+    let app = common::test_state().await;
+    let uploaded = common::upload_and_wait_for_ocr(
+        &app,
+        "dutchdate.docs@example.com",
+        "tests/fixtures/dutch_sample.png",
+        "dutch_sample.png",
+        "image/png",
+    )
+    .await;
+    assert_eq!(uploaded.outcome.status, "done");
+    assert!(
+        uploaded.outcome.suggested_date_issued.is_some(),
+        "expected a Dutch month name in the fixture's OCR'd text to produce a date suggestion"
+    );
+}
+
+#[tokio::test]
+async fn ukrainian_text_can_produce_a_date_suggestion() {
+    if !tesseract_available() {
+        eprintln!("skipping ukrainian_text_can_produce_a_date_suggestion: `tesseract` not found on PATH");
+        return;
+    }
+    if !common::tesseract_has_lang("ukr") {
+        eprintln!("skipping ukrainian_text_can_produce_a_date_suggestion: tesseract-ocr-ukr (ukr.traineddata) not installed");
+        return;
+    }
+
+    let app = common::test_state().await;
+    let uploaded = common::upload_and_wait_for_ocr(
+        &app,
+        "ukrainiandate.docs@example.com",
+        "tests/fixtures/ukrainian_sample.png",
+        "ukrainian_sample.png",
+        "image/png",
+    )
+    .await;
+    assert_eq!(uploaded.outcome.status, "done");
+    assert!(
+        uploaded.outcome.suggested_date_issued.is_some(),
+        "expected a Ukrainian genitive month name in the fixture's OCR'd text to produce a date suggestion"
+    );
+}
+
 #[tokio::test]
 async fn an_ocr_derived_date_takes_priority_over_a_conflicting_exif_capture_date() {
     if !tesseract_available() {

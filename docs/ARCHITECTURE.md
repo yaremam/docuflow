@@ -406,6 +406,7 @@ first.
 
 | Feature | TDR | Chosen approach | Why (one line) |
 |---|---|---|---|
+| Non-English month names in date extraction | [030](tdr/030_non_english_month_names_design.md) | Per-language `const` tables (`ENGLISH`/`GERMAN`/`DUTCH`/`UKRAINIAN`) flattened via one `LANGUAGES` registry, tried in a single combined pass — no per-document language detection; Ukrainian uses genitive forms (the form real dates use); also added abbreviations for all 4 languages, and fixed the day-first pattern to allow German's "15. März" ordinal-day period | Adding a language is additive-only (one table + one registry entry); mirrors tesseract's own no-per-document-selection philosophy; Ukrainian month names sourced, not guessed, since a wrong table fails silently (TDR 030 §2-3) |
 | Duplicate detection | [029](tdr/029_duplicate_detection_design.md) | Hex-SHA-256 `documents.content_hash`, computed synchronously at upload time for both ingestion paths (`BlobStore::stream_upload_with_hash`'s same-pass loop; a direct digest of the scan path's already-in-memory PDF bytes); `run_ocr` backfills it on every reprocess; `show()` does a live "oldest other match?" lookup whenever `uploaded=true`, no new query param needed | Never blocks the upload, only warns (matches this app's suggestion-based philosophy); gating the lookup on the existing `uploaded` flag makes both ingestion paths and the one-shot-never-again rule fall out for free (TDR 029 §2-3) |
 | *Codebase health: facet-scaffolding refactor (not a user feature)* | [028](tdr/028_facet_module_refactor_design.md) | New `src/web/facets.rs`: `ActiveFilters` normalizes `ListQuery` once (replacing 3 parallel shapes of the same state); `assemble_facet_options` collapses 5 hand-copied "discover → narrow-count → mark checked → push" loops into one pure, unit-tested function | An architecture review found `documents.rs` (1964 lines, touched by nearly every feature since 012) had grown 5 shallow near-copies with no seam testable without Postgres/axum (TDR 028 §1-3) |
 | Bulk actions on the dashboard | [026](tdr/026_bulk_dashboard_actions_design.md) | Row checkboxes + a toolbar inside the existing single filters `<form>` via `formaction`/`formmethod` (never a second nested form); `axum_extra::extract::Form` for the repeated `doc_ids`; bulk delete gets a confirm page, bulk tag/reprocess don't; reprocess reuses `reprocess_ocr`'s exact eligibility guard and the existing `state.ocr_semaphore` | Avoids this project's own documented nested-`<form>` bug; the semaphore already bounds concurrent OCR regardless of how many rows are bulk-spawned, closing §8's bulk-reprocess gap with no new batching logic (TDR 026 §2 Alternative E) |
@@ -487,12 +488,6 @@ gaps:
   `tesseract-ocr-srp` pack is a separate, not-yet-built backlog item
   (deliberately deferred out of feature 020, per the user's explicit
   direction 2026-07-13).
-- **Non-English month names in date extraction** — feature 012's
-  `date_extract.rs` recognizes English month names and numeric/ISO
-  shapes only, even though feature 011 added Cyrillic OCR; Cyrillic (or
-  other non-English) month names are not yet recognized. Feature 019's
-  EXIF fallback doesn't help here either — it's a capture timestamp, not
-  text parsing.
 - **The date-issued facet still supports only one active year (optionally
   + one month) at a time**, not several simultaneously — unaffected by
   feature 018's count-narrowing work, which only changed what number is

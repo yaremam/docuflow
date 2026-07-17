@@ -15,20 +15,132 @@ use std::sync::OnceLock;
 
 use time::{Date, Month, OffsetDateTime};
 
-const MONTH_NAMES: &[(&str, Month)] = &[
+// Each language is its own table (full names, then common abbreviations —
+// `\.?` in the regex built from these already treats a trailing period as
+// optional, so a bare "jan" entry covers both "Jan" and "Jan." — see
+// TDR 030 §3). Adding a language later means adding one more `const` table
+// here and one entry to `LANGUAGES` below; nothing else in this file
+// changes. Every language is tried in the same combined pass — no
+// per-document language detection, matching how tesseract itself OCRs in
+// `eng+deu+nld+ukr` multi-language mode with no per-document selection
+// (TDR 030 §2 Alternative B).
+const ENGLISH: &[(&str, Month)] = &[
     ("january", Month::January),
+    ("jan", Month::January),
     ("february", Month::February),
+    ("feb", Month::February),
     ("march", Month::March),
+    ("mar", Month::March),
     ("april", Month::April),
+    ("apr", Month::April),
     ("may", Month::May),
     ("june", Month::June),
+    ("jun", Month::June),
     ("july", Month::July),
+    ("jul", Month::July),
     ("august", Month::August),
+    ("aug", Month::August),
     ("september", Month::September),
+    ("sep", Month::September),
+    ("sept", Month::September),
     ("october", Month::October),
+    ("oct", Month::October),
     ("november", Month::November),
+    ("nov", Month::November),
     ("december", Month::December),
+    ("dec", Month::December),
 ];
+
+/// German doesn't decline month names (nominative form always); `mär`/`mai`
+/// abbreviations are conventionally unused in practice (already short) but
+/// harmless to list — a form that never appears in real text just never
+/// matches (TDR 030 §3).
+const GERMAN: &[(&str, Month)] = &[
+    ("januar", Month::January),
+    ("jan", Month::January),
+    ("februar", Month::February),
+    ("feb", Month::February),
+    ("märz", Month::March),
+    ("mär", Month::March),
+    ("april", Month::April),
+    ("apr", Month::April),
+    ("mai", Month::May),
+    ("juni", Month::June),
+    ("jun", Month::June),
+    ("juli", Month::July),
+    ("jul", Month::July),
+    ("august", Month::August),
+    ("aug", Month::August),
+    ("september", Month::September),
+    ("sep", Month::September),
+    ("oktober", Month::October),
+    ("okt", Month::October),
+    ("november", Month::November),
+    ("nov", Month::November),
+    ("dezember", Month::December),
+    ("dez", Month::December),
+];
+
+const DUTCH: &[(&str, Month)] = &[
+    ("januari", Month::January),
+    ("jan", Month::January),
+    ("februari", Month::February),
+    ("feb", Month::February),
+    ("maart", Month::March),
+    ("mrt", Month::March),
+    ("april", Month::April),
+    ("apr", Month::April),
+    ("mei", Month::May),
+    ("juni", Month::June),
+    ("jun", Month::June),
+    ("juli", Month::July),
+    ("jul", Month::July),
+    ("augustus", Month::August),
+    ("aug", Month::August),
+    ("september", Month::September),
+    ("sep", Month::September),
+    ("oktober", Month::October),
+    ("okt", Month::October),
+    ("november", Month::November),
+    ("nov", Month::November),
+    ("december", Month::December),
+    ("dec", Month::December),
+];
+
+/// Genitive case — the form real Ukrainian dates use ("15 січня 2024"),
+/// not the nominative calendar-header form ("січень"). Abbreviations
+/// follow the sourced "first three letters" convention; because the
+/// genitive suffix only replaces the *end* of the nominative word, those
+/// first three letters are identical in both forms for every month, so
+/// one abbreviated entry covers both without ambiguity (TDR 030 §3).
+const UKRAINIAN: &[(&str, Month)] = &[
+    ("січня", Month::January),
+    ("січ", Month::January),
+    ("лютого", Month::February),
+    ("лют", Month::February),
+    ("березня", Month::March),
+    ("бер", Month::March),
+    ("квітня", Month::April),
+    ("кві", Month::April),
+    ("травня", Month::May),
+    ("тра", Month::May),
+    ("червня", Month::June),
+    ("чер", Month::June),
+    ("липня", Month::July),
+    ("лип", Month::July),
+    ("серпня", Month::August),
+    ("сер", Month::August),
+    ("вересня", Month::September),
+    ("вер", Month::September),
+    ("жовтня", Month::October),
+    ("жов", Month::October),
+    ("листопада", Month::November),
+    ("лис", Month::November),
+    ("грудня", Month::December),
+    ("гру", Month::December),
+];
+
+const LANGUAGES: &[&[(&str, Month)]] = &[ENGLISH, GERMAN, DUTCH, UKRAINIAN];
 
 fn sane_year(year: i32) -> bool {
     let current_year = OffsetDateTime::now_utc().year();
@@ -70,8 +182,9 @@ fn find_iso(text: &str) -> Option<Date> {
 fn month_name_alternation() -> &'static str {
     static PATTERN: OnceLock<String> = OnceLock::new();
     PATTERN.get_or_init(|| {
-        MONTH_NAMES
+        LANGUAGES
             .iter()
+            .flat_map(|language| language.iter())
             .map(|(name, _)| *name)
             .collect::<Vec<_>>()
             .join("|")
@@ -96,7 +209,11 @@ fn find_month_name(text: &str) -> Option<Date> {
     let day_first = cached_regex(
         &DAY_FIRST,
         &format!(
-            r"(?i)\b(\d{{1,2}})\s+({})\.?,?\s+(\d{{4}})\b",
+            // The optional period right after the day (`\d{{1,2}}\.?`) is
+            // needed for German's ordinal-day convention — "15. März 2024"
+            // is the standard way to write that date, not "15 März 2024"
+            // (TDR 030 §3).
+            r"(?i)\b(\d{{1,2}})\.?\s+({})\.?,?\s+(\d{{4}})\b",
             month_name_alternation()
         ),
     );
@@ -128,8 +245,9 @@ fn find_month_name(text: &str) -> Option<Date> {
 
 fn lookup_month(name: &str) -> Option<Month> {
     let lower = name.to_lowercase();
-    MONTH_NAMES
+    LANGUAGES
         .iter()
+        .flat_map(|language| language.iter())
         .find(|(candidate, _)| *candidate == lower)
         .map(|(_, month)| *month)
 }
@@ -222,6 +340,91 @@ mod tests {
         assert_eq!(
             date,
             Date::from_calendar_date(2024, Month::March, 4).unwrap()
+        );
+    }
+
+    #[test]
+    fn finds_english_abbreviated_month_name() {
+        let date = extract_issued_date("Due Jan 5, 2024").unwrap();
+        assert_eq!(
+            date,
+            Date::from_calendar_date(2024, Month::January, 5).unwrap()
+        );
+    }
+
+    #[test]
+    fn finds_german_full_month_name() {
+        let date = extract_issued_date("Rechnungsdatum: 15. März 2024").unwrap();
+        assert_eq!(
+            date,
+            Date::from_calendar_date(2024, Month::March, 15).unwrap()
+        );
+    }
+
+    #[test]
+    fn finds_german_abbreviated_month_name() {
+        let date = extract_issued_date("Fällig am 5. Jan. 2024").unwrap();
+        assert_eq!(
+            date,
+            Date::from_calendar_date(2024, Month::January, 5).unwrap()
+        );
+    }
+
+    #[test]
+    fn finds_dutch_full_month_name() {
+        let date = extract_issued_date("Factuurdatum: 15 maart 2024").unwrap();
+        assert_eq!(
+            date,
+            Date::from_calendar_date(2024, Month::March, 15).unwrap()
+        );
+    }
+
+    #[test]
+    fn finds_dutch_abbreviated_month_name() {
+        let date = extract_issued_date("Vervaldatum: 5 mrt 2024").unwrap();
+        assert_eq!(
+            date,
+            Date::from_calendar_date(2024, Month::March, 5).unwrap()
+        );
+    }
+
+    #[test]
+    fn finds_ukrainian_genitive_month_name() {
+        let date = extract_issued_date("Дата рахунку: 15 січня 2024 року").unwrap();
+        assert_eq!(
+            date,
+            Date::from_calendar_date(2024, Month::January, 15).unwrap()
+        );
+    }
+
+    #[test]
+    fn finds_ukrainian_abbreviated_month_name() {
+        let date = extract_issued_date("Термін сплати: 5 січ 2024").unwrap();
+        assert_eq!(
+            date,
+            Date::from_calendar_date(2024, Month::January, 5).unwrap()
+        );
+    }
+
+    #[test]
+    fn finds_ukrainian_december_genitive_month_name() {
+        // Distinct suffix shape from January (-ня vs -да below) — worth its
+        // own case since Ukrainian genitive endings aren't uniform.
+        let date = extract_issued_date("15 грудня 2024").unwrap();
+        assert_eq!(
+            date,
+            Date::from_calendar_date(2024, Month::December, 15).unwrap()
+        );
+    }
+
+    #[test]
+    fn finds_ukrainian_november_genitive_month_name_with_da_suffix() {
+        // листопада ends in -да, not -ня — the one month whose genitive
+        // suffix shape differs from the rest.
+        let date = extract_issued_date("15 листопада 2024").unwrap();
+        assert_eq!(
+            date,
+            Date::from_calendar_date(2024, Month::November, 15).unwrap()
         );
     }
 

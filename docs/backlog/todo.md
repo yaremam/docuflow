@@ -1,6 +1,5 @@
 - implement proper password reset
 - batch feature 018's per-facet-option count queries into fewer round trips if page-load latency ever becomes a real complaint (deliberately deferred out of 018, see TDR 018 §2 Alternative B)
-- non-English month names in date_extract.rs — already on ARCHITECTURE §8 deferred list; improves date-suggestion hit rate for Cyrillic/German/Dutch documents
 - expiry dates + renewal reminders — date_expires column with OCR suggestion (reuse 012's pattern), "expiring soon" dashboard strip, reminder emails via existing mailer/Mailpit stack
 - trash / soft delete with restore — delete is currently permanent; 30-day trash
 - email-in ingestion — per-user address to forward bill PDFs to; bigger lift, needs inbound mail handling
