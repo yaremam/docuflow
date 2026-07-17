@@ -19,6 +19,7 @@ use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::web::error::AppWebError;
+use crate::web::facets::{assemble_facet_options, ActiveFilters};
 use crate::web::forms::{CollectionName, DateIssuedField, DocTypeField, Language, ProfileField, Tags};
 use crate::web::nav;
 use crate::web::state::AppState;
@@ -129,30 +130,14 @@ impl Sort {
     }
 }
 
-/// Parses the search box's comma-separated tag list into an overlap filter.
-/// A deliberately ad hoc parse (not the `Tags` form newtype) since this is a
-/// transient query filter, not data being stored.
-fn parse_tag_search(q: &str) -> Option<Vec<String>> {
-    let tags: Vec<String> = q
-        .split(',')
-        .map(str::trim)
-        .filter(|tag| !tag.is_empty())
-        .map(str::to_string)
-        .collect();
-
-    if tags.is_empty() {
-        None
-    } else {
-        Some(tags)
-    }
-}
-
-/// The same search box's second, OR'd way to match a document: full-text
-/// against `documents.ocr_search` (feature 023), independent of
-/// `parse_tag_search`'s comma-split tag overlap. `'simple'` text search
-/// config deliberately, not `'english'` — this app OCRs German/Dutch/
-/// Ukrainian/Cyrillic text too (feature 020), and `'english'` would run
-/// every token through the English stemmer regardless of actual language.
+/// `show`'s own free-text half of its `q` (feature 027 highlighting) —
+/// `list`'s equivalent lives behind `ActiveFilters::search_text` (its
+/// comma-split tag-overlap half behind `ActiveFilters::q_tags`), but
+/// `show` has no facets to build, so it just calls this directly.
+/// `'simple'` text search config deliberately, not `'english'` — this
+/// app OCRs German/Dutch/Ukrainian/Cyrillic text too (feature 020), and
+/// `'english'` would run every token through the English stemmer
+/// regardless of actual language.
 fn free_text_search(q: &str) -> Option<&str> {
     let trimmed = q.trim();
     if trimmed.is_empty() { None } else { Some(trimmed) }
@@ -230,39 +215,32 @@ fn url_encode(value: &str) -> String {
 /// set of filter state — shared by `build_documents_url` below and by
 /// `list`'s "Save this search" hidden field (feature 016), so a saved
 /// collection's stored `query` is byte-for-byte the same shape as any
-/// other filter link this page produces.
-#[allow(clippy::too_many_arguments)]
-fn build_query_string(
-    q: &str,
-    sort: &str,
-    tags: &[String],
-    date_year: Option<i32>,
-    date_month: Option<i32>,
-    undated: bool,
-    lang: &[String],
-    doc_type: &[String],
-) -> String {
+/// other filter link this page produces. `sort` is taken separately from
+/// `active` — it's display-order state, not a filter dimension `count_
+/// documents`/`count_matching_documents` ever need (see `ActiveFilters`'
+/// own doc comment).
+fn build_query_string(active: &ActiveFilters, sort: &str) -> String {
     let mut params: Vec<(&str, String)> = Vec::new();
-    if !q.is_empty() {
-        params.push(("q", q.to_string()));
+    if !active.q.is_empty() {
+        params.push(("q", active.q.clone()));
     }
     params.push(("sort", sort.to_string()));
-    for tag in tags {
+    for tag in &active.tags {
         params.push(("tags", tag.clone()));
     }
-    if let Some(year) = date_year {
+    if let Some(year) = active.date_year {
         params.push(("date_year", year.to_string()));
     }
-    if let Some(month) = date_month {
+    if let Some(month) = active.date_month {
         params.push(("date_month", month.to_string()));
     }
-    if undated {
+    if active.undated {
         params.push(("undated", "true".to_string()));
     }
-    for value in lang {
+    for value in &active.lang {
         params.push(("lang", value.clone()));
     }
-    for value in doc_type {
+    for value in &active.doc_type {
         params.push(("doc_type", value.clone()));
     }
 
@@ -273,18 +251,8 @@ fn build_query_string(
 /// shared by the applied-filter chips' individual "remove this one" links
 /// and "Clear all", so both stay in sync with the query params `list`
 /// itself parses (see TDR 015 §3).
-#[allow(clippy::too_many_arguments)]
-fn build_documents_url(
-    q: &str,
-    sort: &str,
-    tags: &[String],
-    date_year: Option<i32>,
-    date_month: Option<i32>,
-    undated: bool,
-    lang: &[String],
-    doc_type: &[String],
-) -> String {
-    let query_string = build_query_string(q, sort, tags, date_year, date_month, undated, lang, doc_type);
+fn build_documents_url(active: &ActiveFilters, sort: &str) -> String {
+    let query_string = build_query_string(active, sort);
     if query_string.is_empty() {
         "/documents".to_string()
     } else {
@@ -292,17 +260,30 @@ fn build_documents_url(
     }
 }
 
-/// Whether a parsed `ListQuery` has any real filter active — a facet or
-/// non-empty free-text search. Shared by `list` (gating the "Save this
-/// search" control) and `save_collection` (rejecting a no-op save server-
-/// side, not just hiding the UI control — see TDR 016 AC-4).
-fn query_has_active_filters(filters: &ListQuery) -> bool {
-    !filters.tags.is_empty()
-        || filters.date_year.is_some()
-        || filters.undated
-        || !filters.lang.is_empty()
-        || !filters.doc_type.is_empty()
-        || !filters.q.trim().is_empty()
+/// Normalizes a `ListQuery` into `ActiveFilters` (feature 027/028) — the
+/// one place `list`, `count_matching_documents`, and `save_collection` all
+/// build this from the same raw query-param shape, so they can't drift.
+fn active_filters(query: &ListQuery) -> ActiveFilters {
+    ActiveFilters::new(query.q.clone(), query.tags.clone(), query.date_year, query.date_month, query.undated, query.lang.clone(), query.doc_type.clone())
+}
+
+/// The "no dimension narrowed" `FacetFilters` view of the request's
+/// current `ActiveFilters` — every one of `count_documents`'s ~9 call
+/// sites starts here and overrides just the one field it's narrowing by
+/// (TDR 028 §3), rather than each hand-writing all 10 fields itself.
+fn base_facet_filters(active: &ActiveFilters) -> FacetFilters<'_> {
+    FacetFilters {
+        q_tags: active.q_tags(),
+        facet_tags: &active.tags,
+        date_year: active.date_year,
+        date_month: active.date_month,
+        undated: active.undated,
+        lang_values: active.lang_values(),
+        lang_unset: active.lang_unset(),
+        search_text: active.search_text(),
+        doc_type_values: active.doc_type_values(),
+        doc_type_unset: active.doc_type_unset(),
+    }
 }
 
 /// Counts documents matching an arbitrary filter set — the same
@@ -381,32 +362,8 @@ async fn count_documents(state: &AppState, tenant_id: Uuid, facets: FacetFilters
 /// one facet option narrowed by the others (see `count_documents` and
 /// TDR 018 §1 for why those are different questions).
 async fn count_matching_documents(state: &AppState, tenant_id: Uuid, filters: &ListQuery) -> Result<i64, AppWebError> {
-    let tag_filter = parse_tag_search(&filters.q);
-    let search_text = free_text_search(&filters.q);
-    let date_year = filters.date_year;
-    let date_month = if date_year.is_some() { filters.date_month } else { None };
-    let lang_values: Vec<String> = filters.lang.iter().filter(|value| value.as_str() != "unset").cloned().collect();
-    let lang_unset = filters.lang.iter().any(|value| value == "unset");
-    let doc_type_values: Vec<String> = filters.doc_type.iter().filter(|value| value.as_str() != "unset").cloned().collect();
-    let doc_type_unset = filters.doc_type.iter().any(|value| value == "unset");
-
-    count_documents(
-        state,
-        tenant_id,
-        FacetFilters {
-            q_tags: tag_filter.as_deref(),
-            facet_tags: &filters.tags,
-            date_year,
-            date_month,
-            undated: filters.undated,
-            lang_values: &lang_values,
-            lang_unset,
-            search_text,
-            doc_type_values: &doc_type_values,
-            doc_type_unset,
-        },
-    )
-    .await
+    let active = active_filters(filters);
+    count_documents(state, tenant_id, base_facet_filters(&active)).await
 }
 
 #[tracing::instrument(skip(state, tenancy, query))]
@@ -416,16 +373,8 @@ pub async fn list(
     MultiQuery(query): MultiQuery<ListQuery>,
 ) -> Result<DocumentsListTemplate, AppWebError> {
     let nav_avatar_url = nav::avatar_url(&state.pool, &state.blob, tenancy.user_id.0).await?;
-    let tag_filter = parse_tag_search(&query.q);
-    let search_text = free_text_search(&query.q);
     let sort = Sort::parse(query.sort.as_deref());
-
-    let date_year = query.date_year;
-    let date_month = if date_year.is_some() { query.date_month } else { None };
-    let lang_values: Vec<String> = query.lang.iter().filter(|value| value.as_str() != "unset").cloned().collect();
-    let lang_unset = query.lang.iter().any(|value| value == "unset");
-    let doc_type_values: Vec<String> = query.doc_type.iter().filter(|value| value.as_str() != "unset").cloned().collect();
-    let doc_type_unset = query.doc_type.iter().any(|value| value == "unset");
+    let active = active_filters(&query);
 
     // Each arm differs only in `ORDER BY` — sqlx's compile-time `query_as!`
     // macro can't parameterize that clause, so the small, fixed set of sort
@@ -462,16 +411,16 @@ pub async fn list(
                           or ($11 and doc_type is null))
                    order by created_at desc"#,
                 tenancy.tenant_id.0,
-                tag_filter.as_deref(),
-                query.tags.as_slice(),
-                date_year,
-                date_month,
-                query.undated,
-                lang_values.as_slice(),
-                lang_unset,
-                search_text,
-                doc_type_values.as_slice(),
-                doc_type_unset,
+                active.q_tags(),
+                active.tags.as_slice(),
+                active.date_year,
+                active.date_month,
+                active.undated,
+                active.lang_values(),
+                active.lang_unset(),
+                active.search_text(),
+                active.doc_type_values(),
+                active.doc_type_unset(),
                 crate::highlight::SNIPPET_OPTIONS,
             )
             .fetch_all(&state.pool)
@@ -501,16 +450,16 @@ pub async fn list(
                           or ($11 and doc_type is null))
                    order by created_at asc"#,
                 tenancy.tenant_id.0,
-                tag_filter.as_deref(),
-                query.tags.as_slice(),
-                date_year,
-                date_month,
-                query.undated,
-                lang_values.as_slice(),
-                lang_unset,
-                search_text,
-                doc_type_values.as_slice(),
-                doc_type_unset,
+                active.q_tags(),
+                active.tags.as_slice(),
+                active.date_year,
+                active.date_month,
+                active.undated,
+                active.lang_values(),
+                active.lang_unset(),
+                active.search_text(),
+                active.doc_type_values(),
+                active.doc_type_unset(),
                 crate::highlight::SNIPPET_OPTIONS,
             )
             .fetch_all(&state.pool)
@@ -540,16 +489,16 @@ pub async fn list(
                           or ($11 and doc_type is null))
                    order by date_issued desc nulls last"#,
                 tenancy.tenant_id.0,
-                tag_filter.as_deref(),
-                query.tags.as_slice(),
-                date_year,
-                date_month,
-                query.undated,
-                lang_values.as_slice(),
-                lang_unset,
-                search_text,
-                doc_type_values.as_slice(),
-                doc_type_unset,
+                active.q_tags(),
+                active.tags.as_slice(),
+                active.date_year,
+                active.date_month,
+                active.undated,
+                active.lang_values(),
+                active.lang_unset(),
+                active.search_text(),
+                active.doc_type_values(),
+                active.doc_type_unset(),
                 crate::highlight::SNIPPET_OPTIONS,
             )
             .fetch_all(&state.pool)
@@ -579,16 +528,16 @@ pub async fn list(
                           or ($11 and doc_type is null))
                    order by date_issued asc nulls last"#,
                 tenancy.tenant_id.0,
-                tag_filter.as_deref(),
-                query.tags.as_slice(),
-                date_year,
-                date_month,
-                query.undated,
-                lang_values.as_slice(),
-                lang_unset,
-                search_text,
-                doc_type_values.as_slice(),
-                doc_type_unset,
+                active.q_tags(),
+                active.tags.as_slice(),
+                active.date_year,
+                active.date_month,
+                active.undated,
+                active.lang_values(),
+                active.lang_unset(),
+                active.search_text(),
+                active.doc_type_values(),
+                active.doc_type_unset(),
                 crate::highlight::SNIPPET_OPTIONS,
             )
             .fetch_all(&state.pool)
@@ -618,16 +567,16 @@ pub async fn list(
                           or ($11 and doc_type is null))
                    order by array_to_string(tags, ',') asc"#,
                 tenancy.tenant_id.0,
-                tag_filter.as_deref(),
-                query.tags.as_slice(),
-                date_year,
-                date_month,
-                query.undated,
-                lang_values.as_slice(),
-                lang_unset,
-                search_text,
-                doc_type_values.as_slice(),
-                doc_type_unset,
+                active.q_tags(),
+                active.tags.as_slice(),
+                active.date_year,
+                active.date_month,
+                active.undated,
+                active.lang_values(),
+                active.lang_unset(),
+                active.search_text(),
+                active.doc_type_values(),
+                active.doc_type_unset(),
                 crate::highlight::SNIPPET_OPTIONS,
             )
             .fetch_all(&state.pool)
@@ -679,29 +628,22 @@ pub async fn list(
     )
     .fetch_all(&state.pool)
     .await?;
-    let mut tag_facets = Vec::with_capacity(tag_rows.len());
-    for row in tag_rows {
-        let name = row.tag.unwrap_or_default();
-        let checked = query.tags.iter().any(|tag| tag == &name);
+    let tag_candidates: Vec<String> = tag_rows.into_iter().map(|row| row.tag.unwrap_or_default()).collect();
+    let mut tag_counts = Vec::with_capacity(tag_candidates.len());
+    for name in tag_candidates {
         let count = count_documents(
             &state,
             tenancy.tenant_id.0,
-            FacetFilters {
-                q_tags: tag_filter.as_deref(),
-                facet_tags: std::slice::from_ref(&name),
-                date_year,
-                date_month,
-                undated: query.undated,
-                lang_values: &lang_values,
-                lang_unset,
-                search_text,
-                doc_type_values: &doc_type_values,
-                doc_type_unset,
-            },
+            FacetFilters { facet_tags: std::slice::from_ref(&name), ..base_facet_filters(&active) },
         )
         .await?;
-        tag_facets.push(TagFacetOption { name, count, checked });
+        tag_counts.push((name, count));
     }
+    let tag_facets = assemble_facet_options(
+        tag_counts,
+        |name| active.tags.iter().any(|tag| tag == name),
+        |name, count, checked| TagFacetOption { name, count, checked },
+    );
 
     let year_rows = sqlx::query!(
         "select extract(year from date_issued)::int4 as year, count(*) as count
@@ -711,8 +653,29 @@ pub async fn list(
     )
     .fetch_all(&state.pool)
     .await?;
-    let month_rows = if let Some(year) = date_year {
-        sqlx::query!(
+    let year_candidates: Vec<i32> = year_rows.into_iter().map(|row| row.year.unwrap_or(0)).collect();
+    let mut year_counts = Vec::with_capacity(year_candidates.len());
+    for year in year_candidates {
+        let count = count_documents(
+            &state,
+            tenancy.tenant_id.0,
+            FacetFilters { date_year: Some(year), date_month: None, undated: false, ..base_facet_filters(&active) },
+        )
+        .await?;
+        year_counts.push((year, count));
+    }
+    let mut year_facets = assemble_facet_options(
+        year_counts,
+        |year| active.date_year == Some(*year),
+        |year, count, checked| YearFacetOption { year, count, checked, months: Vec::new() },
+    );
+
+    // Months only ever exist nested under the single checked year (there's
+    // at most one), so they're fetched/narrowed once here rather than
+    // once per year candidate, then attached to whichever `YearFacetOption`
+    // came back checked.
+    if let Some(year) = active.date_year {
+        let month_rows = sqlx::query!(
             "select extract(month from date_issued)::int4 as month, count(*) as count
              from documents where tenant_id = $1 and extract(year from date_issued)::int4 = $2
              group by month order by month",
@@ -720,81 +683,32 @@ pub async fn list(
             year,
         )
         .fetch_all(&state.pool)
-        .await?
-    } else {
-        Vec::new()
-    };
-    let mut year_facets = Vec::with_capacity(year_rows.len());
-    for row in year_rows {
-        let year = row.year.unwrap_or(0);
-        let checked = date_year == Some(year);
-        let count = count_documents(
-            &state,
-            tenancy.tenant_id.0,
-            FacetFilters {
-                q_tags: tag_filter.as_deref(),
-                facet_tags: &query.tags,
-                date_year: Some(year),
-                date_month: None,
-                undated: false,
-                lang_values: &lang_values,
-                lang_unset,
-                search_text,
-                doc_type_values: &doc_type_values,
-                doc_type_unset,
-            },
-        )
         .await?;
-        let months = if checked {
-            let mut month_facets = Vec::with_capacity(month_rows.len());
-            for month_row in &month_rows {
-                let month = month_row.month.unwrap_or(0);
-                let month_count = count_documents(
-                    &state,
-                    tenancy.tenant_id.0,
-                    FacetFilters {
-                        q_tags: tag_filter.as_deref(),
-                        facet_tags: &query.tags,
-                        date_year: Some(year),
-                        date_month: Some(month),
-                        undated: false,
-                        lang_values: &lang_values,
-                        lang_unset,
-                        search_text,
-                        doc_type_values: &doc_type_values,
-                        doc_type_unset,
-                    },
-                )
-                .await?;
-                month_facets.push(MonthFacetOption {
-                    label: month_name(month),
-                    value: month.clamp(0, 12) as u8,
-                    count: month_count,
-                    checked: date_month == Some(month),
-                });
-            }
-            month_facets
-        } else {
-            Vec::new()
-        };
-        year_facets.push(YearFacetOption { year, count, checked, months });
+        let month_candidates: Vec<i32> = month_rows.into_iter().map(|row| row.month.unwrap_or(0)).collect();
+        let mut month_counts = Vec::with_capacity(month_candidates.len());
+        for month in month_candidates {
+            let count = count_documents(
+                &state,
+                tenancy.tenant_id.0,
+                FacetFilters { date_year: Some(year), date_month: Some(month), undated: false, ..base_facet_filters(&active) },
+            )
+            .await?;
+            month_counts.push((month, count));
+        }
+        let month_facets = assemble_facet_options(
+            month_counts,
+            |month| active.date_month == Some(*month),
+            |month, count, checked| MonthFacetOption { label: month_name(month), value: month.clamp(0, 12) as u8, count, checked },
+        );
+        if let Some(checked_year) = year_facets.iter_mut().find(|year_option| year_option.checked) {
+            checked_year.months = month_facets;
+        }
     }
 
     let undated_count = count_documents(
         &state,
         tenancy.tenant_id.0,
-        FacetFilters {
-            q_tags: tag_filter.as_deref(),
-            facet_tags: &query.tags,
-            date_year: None,
-            date_month: None,
-            undated: true,
-            lang_values: &lang_values,
-            lang_unset,
-            search_text,
-            doc_type_values: &doc_type_values,
-            doc_type_unset,
-        },
+        FacetFilters { date_year: None, date_month: None, undated: true, ..base_facet_filters(&active) },
     )
     .await?;
 
@@ -804,48 +718,34 @@ pub async fn list(
     )
     .fetch_all(&state.pool)
     .await?;
-    let mut language_facets = Vec::with_capacity(language_rows.len() + 1);
-    for row in language_rows {
-        let Some(code) = row.language else { continue };
+    let language_candidates: Vec<String> = language_rows.into_iter().filter_map(|row| row.language).collect();
+    let mut language_counts = Vec::with_capacity(language_candidates.len());
+    for code in language_candidates {
         let count = count_documents(
             &state,
             tenancy.tenant_id.0,
-            FacetFilters {
-                q_tags: tag_filter.as_deref(),
-                facet_tags: &query.tags,
-                date_year,
-                date_month,
-                undated: query.undated,
-                lang_values: std::slice::from_ref(&code),
-                lang_unset: false,
-                search_text,
-                doc_type_values: &doc_type_values,
-                doc_type_unset,
-            },
+            FacetFilters { lang_values: std::slice::from_ref(&code), lang_unset: false, ..base_facet_filters(&active) },
         )
         .await?;
-        let checked = lang_values.iter().any(|v| v == &code);
-        let label = crate::languages::display_name(&code);
-        language_facets.push(LanguageFacetOption { value: code, label, count, checked });
+        language_counts.push((code, count));
     }
+    let mut language_facets = assemble_facet_options(
+        language_counts,
+        |code| active.lang_values().iter().any(|v| v == code),
+        |code, count, checked| LanguageFacetOption { label: crate::languages::display_name(&code), value: code, count, checked },
+    );
     let unset_count = count_documents(
         &state,
         tenancy.tenant_id.0,
-        FacetFilters {
-            q_tags: tag_filter.as_deref(),
-            facet_tags: &query.tags,
-            date_year,
-            date_month,
-            undated: query.undated,
-            lang_values: &[],
-            lang_unset: true,
-            search_text,
-            doc_type_values: &doc_type_values,
-            doc_type_unset,
-        },
+        FacetFilters { lang_values: &[], lang_unset: true, ..base_facet_filters(&active) },
     )
     .await?;
-    language_facets.push(LanguageFacetOption { value: "unset".to_string(), label: "Not set".to_string(), count: unset_count, checked: lang_unset });
+    language_facets.push(LanguageFacetOption {
+        value: "unset".to_string(),
+        label: "Not set".to_string(),
+        count: unset_count,
+        checked: active.lang_unset(),
+    });
 
     // Document type facet (feature 024) — same discover-then-narrow-count
     // shape as the Language facet just above: candidate set is the
@@ -858,102 +758,93 @@ pub async fn list(
     )
     .fetch_all(&state.pool)
     .await?;
-    let mut doc_type_facets = Vec::with_capacity(doc_type_rows.len() + 1);
-    for row in doc_type_rows {
-        let Some(value) = row.doc_type else { continue };
+    let doc_type_candidates: Vec<String> = doc_type_rows.into_iter().filter_map(|row| row.doc_type).collect();
+    let mut doc_type_counts = Vec::with_capacity(doc_type_candidates.len());
+    for value in doc_type_candidates {
         let count = count_documents(
             &state,
             tenancy.tenant_id.0,
-            FacetFilters {
-                q_tags: tag_filter.as_deref(),
-                facet_tags: &query.tags,
-                date_year,
-                date_month,
-                undated: query.undated,
-                lang_values: &lang_values,
-                lang_unset,
-                search_text,
-                doc_type_values: std::slice::from_ref(&value),
-                doc_type_unset: false,
-            },
+            FacetFilters { doc_type_values: std::slice::from_ref(&value), doc_type_unset: false, ..base_facet_filters(&active) },
         )
         .await?;
-        let checked = doc_type_values.iter().any(|v| v == &value);
-        let label = crate::doc_type_extract::label_for(&value).map(str::to_string).unwrap_or_else(|| value.clone());
-        doc_type_facets.push(DocTypeFacetOption { value, label, count, checked });
+        doc_type_counts.push((value, count));
     }
+    let mut doc_type_facets = assemble_facet_options(
+        doc_type_counts,
+        |value| active.doc_type_values().iter().any(|v| v == value),
+        |value, count, checked| {
+            let label = crate::doc_type_extract::label_for(&value).map(str::to_string).unwrap_or_else(|| value.clone());
+            DocTypeFacetOption { value, label, count, checked }
+        },
+    );
     let doc_type_unset_count = count_documents(
         &state,
         tenancy.tenant_id.0,
-        FacetFilters {
-            q_tags: tag_filter.as_deref(),
-            facet_tags: &query.tags,
-            date_year,
-            date_month,
-            undated: query.undated,
-            lang_values: &lang_values,
-            lang_unset,
-            search_text,
-            doc_type_values: &[],
-            doc_type_unset: true,
-        },
+        FacetFilters { doc_type_values: &[], doc_type_unset: true, ..base_facet_filters(&active) },
     )
     .await?;
     doc_type_facets.push(DocTypeFacetOption {
         value: "unset".to_string(),
         label: "Not set".to_string(),
         count: doc_type_unset_count,
-        checked: doc_type_unset,
+        checked: active.doc_type_unset(),
     });
 
+    // Each chip is "the current active state, with just this one value
+    // removed" — built by cloning `active` and mutating its raw fields
+    // directly. Safe here specifically because `build_documents_url`/
+    // `build_query_string` only ever read those raw fields, never the
+    // derived ones (`q_tags`/`lang_values`/...), which a raw-field mutation
+    // doesn't recompute — a mutated clone must never be passed to
+    // `count_documents`/`base_facet_filters` for that reason.
     let mut applied_filters: Vec<AppliedFilterChip> = Vec::new();
-    for tag in &query.tags {
-        let remaining: Vec<String> = query.tags.iter().filter(|t| *t != tag).cloned().collect();
-        applied_filters.push(AppliedFilterChip {
-            label: tag.clone(),
-            remove_href: build_documents_url(&query.q, sort.as_str(), &remaining, date_year, date_month, query.undated, &query.lang, &query.doc_type),
-        });
+    for tag in &active.tags {
+        let mut remaining = active.clone();
+        remaining.tags.retain(|t| t != tag);
+        applied_filters.push(AppliedFilterChip { label: tag.clone(), remove_href: build_documents_url(&remaining, sort.as_str()) });
     }
-    if let Some(year) = date_year {
-        let label = match date_month {
+    if let Some(year) = active.date_year {
+        let label = match active.date_month {
             Some(month) => format!("Issued {year}-{month:02}"),
             None => format!("Issued {year}"),
         };
-        applied_filters.push(AppliedFilterChip {
-            label,
-            remove_href: build_documents_url(&query.q, sort.as_str(), &query.tags, None, None, query.undated, &query.lang, &query.doc_type),
-        });
+        let mut remaining = active.clone();
+        remaining.date_year = None;
+        remaining.date_month = None;
+        applied_filters.push(AppliedFilterChip { label, remove_href: build_documents_url(&remaining, sort.as_str()) });
     }
-    if query.undated {
-        applied_filters.push(AppliedFilterChip {
-            label: "Undated".to_string(),
-            remove_href: build_documents_url(&query.q, sort.as_str(), &query.tags, date_year, date_month, false, &query.lang, &query.doc_type),
-        });
+    if active.undated {
+        let mut remaining = active.clone();
+        remaining.undated = false;
+        applied_filters.push(AppliedFilterChip { label: "Undated".to_string(), remove_href: build_documents_url(&remaining, sort.as_str()) });
     }
-    for lang_value in &query.lang {
-        let remaining: Vec<String> = query.lang.iter().filter(|v| *v != lang_value).cloned().collect();
+    for lang_value in &active.lang {
+        let mut remaining = active.clone();
+        remaining.lang.retain(|v| v != lang_value);
         let label = if lang_value == "unset" { "Not set".to_string() } else { crate::languages::display_name(lang_value) };
-        applied_filters.push(AppliedFilterChip {
-            label,
-            remove_href: build_documents_url(&query.q, sort.as_str(), &query.tags, date_year, date_month, query.undated, &remaining, &query.doc_type),
-        });
+        applied_filters.push(AppliedFilterChip { label, remove_href: build_documents_url(&remaining, sort.as_str()) });
     }
-    for doc_type_value in &query.doc_type {
-        let remaining: Vec<String> = query.doc_type.iter().filter(|v| *v != doc_type_value).cloned().collect();
+    for doc_type_value in &active.doc_type {
+        let mut remaining = active.clone();
+        remaining.doc_type.retain(|v| v != doc_type_value);
         let label = if doc_type_value == "unset" {
             "Not set".to_string()
         } else {
             crate::doc_type_extract::label_for(doc_type_value).map(str::to_string).unwrap_or_else(|| doc_type_value.clone())
         };
-        applied_filters.push(AppliedFilterChip {
-            label,
-            remove_href: build_documents_url(&query.q, sort.as_str(), &query.tags, date_year, date_month, query.undated, &query.lang, &remaining),
-        });
+        applied_filters.push(AppliedFilterChip { label, remove_href: build_documents_url(&remaining, sort.as_str()) });
     }
 
-    let filters_active =
-        !query.tags.is_empty() || date_year.is_some() || query.undated || !query.lang.is_empty() || !query.doc_type.is_empty();
-    let clear_filters_href = filters_active.then(|| build_documents_url(&query.q, sort.as_str(), &[], None, None, false, &[], &[]));
+    let clear_filters_href = active.has_active_facets().then(|| {
+        let mut cleared = active.clone();
+        cleared.tags.clear();
+        cleared.date_year = None;
+        cleared.date_month = None;
+        cleared.undated = false;
+        cleared.lang.clear();
+        cleared.doc_type.clear();
+        build_documents_url(&cleared, sort.as_str())
+    });
 
     let collection_rows = sqlx::query!(
         "select id, name, query, created_at from smart_collections where tenant_id = $1 order by created_at desc",
@@ -968,15 +859,14 @@ pub async fn list(
         collections.push(CollectionOption { id: row.id, name: row.name, href: format!("/documents?{}", row.query), count });
     }
 
-    let can_save_search = query_has_active_filters(&query);
-    let save_search_query =
-        build_query_string(&query.q, sort.as_str(), &query.tags, date_year, date_month, query.undated, &query.lang, &query.doc_type);
+    let can_save_search = active.has_active_filters();
+    let save_search_query = build_query_string(&active, sort.as_str());
     // Carries the active free-text search into a result row's link to its
     // detail page (feature 027), so `/documents/{id}` knows what to
     // highlight in the OCR text box — a document reached any other way
     // (direct link, dashboard row with no active search) gets no `?q=`
     // suffix and renders unchanged (TDR 027 §3, AC-4/AC-7).
-    let detail_link_query = search_text.map(|text| format!("?q={}", url_encode(text))).unwrap_or_default();
+    let detail_link_query = active.search_text().map(|text| format!("?q={}", url_encode(text))).unwrap_or_default();
 
     Ok(DocumentsListTemplate {
         active_tab: "documents",
@@ -1896,7 +1786,7 @@ pub async fn save_collection(
     Form(form): Form<SaveCollectionForm>,
 ) -> Result<Response, AppWebError> {
     let filters: ListQuery = serde_html_form::from_str(&form.query).unwrap_or_default();
-    if !query_has_active_filters(&filters) {
+    if !active_filters(&filters).has_active_filters() {
         return Ok(bad_request("cannot save a search with no active filter"));
     }
 
