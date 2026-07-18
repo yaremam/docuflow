@@ -116,9 +116,10 @@ fn prepare_page(page_number: usize, page: &PageImage) -> Result<PreparedPage, Pd
     }
 }
 
-/// Builds a PDF with one page per input image, in input order. Byte-carrying
-/// arguments deliberately never appear in tracing fields — callers wrap this
-/// in their own span (TDR 022 §4).
+/// Builds a PDF with one page per input image, in input order. `pages` is
+/// skipped so the byte-carrying page images never appear in tracing fields
+/// (TDR 022 §4).
+#[tracing::instrument(skip(pages))]
 pub fn images_to_pdf(pages: &[PageImage]) -> Result<Vec<u8>, PdfAssembleError> {
     if pages.is_empty() {
         return Err(PdfAssembleError::Empty);

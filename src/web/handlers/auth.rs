@@ -2,6 +2,7 @@ use axum::extract::{Extension, Form, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use tower_sessions::Session;
+use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::web::error::AppWebError;
@@ -57,6 +58,7 @@ pub async fn signup_submit(
         password_hash,
     )
     .execute(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await;
 
     match inserted {
@@ -131,6 +133,7 @@ pub async fn login_submit(
         form.email.as_str(),
     )
     .fetch_optional(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     // Wrong password and unknown email must be indistinguishable to the

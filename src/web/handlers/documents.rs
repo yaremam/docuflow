@@ -18,6 +18,7 @@ use serde::Deserialize;
 use tracing::Instrument;
 use uuid::Uuid;
 
+use crate::domain::DocumentId;
 use crate::web::error::AppWebError;
 use crate::web::facets::{assemble_facet_options, ActiveFilters};
 use crate::web::forms::{CollectionName, DateExpiresField, DateIssuedField, DocTypeField, Language, ProfileField, Tags};
@@ -390,6 +391,7 @@ async fn count_documents(state: &AppState, tenant_id: Uuid, facets: FacetFilters
         &expiry_eligible,
     )
     .fetch_one(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?
     .unwrap_or(0);
 
@@ -471,6 +473,7 @@ pub async fn list(
                 &expiry_eligible_doc_types(),
             )
             .fetch_all(&state.pool)
+            .instrument(tracing::info_span!("db.query"))
             .await?
         }
         Sort::CreatedAtAsc => {
@@ -517,6 +520,7 @@ pub async fn list(
                 &expiry_eligible_doc_types(),
             )
             .fetch_all(&state.pool)
+            .instrument(tracing::info_span!("db.query"))
             .await?
         }
         Sort::DateIssuedDesc => {
@@ -563,6 +567,7 @@ pub async fn list(
                 &expiry_eligible_doc_types(),
             )
             .fetch_all(&state.pool)
+            .instrument(tracing::info_span!("db.query"))
             .await?
         }
         Sort::DateIssuedAsc => {
@@ -609,6 +614,7 @@ pub async fn list(
                 &expiry_eligible_doc_types(),
             )
             .fetch_all(&state.pool)
+            .instrument(tracing::info_span!("db.query"))
             .await?
         }
         Sort::TagsAsc => {
@@ -655,6 +661,7 @@ pub async fn list(
                 &expiry_eligible_doc_types(),
             )
             .fetch_all(&state.pool)
+            .instrument(tracing::info_span!("db.query"))
             .await?
         }
     };
@@ -702,6 +709,7 @@ pub async fn list(
         tenancy.tenant_id.0,
     )
     .fetch_all(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
     let tag_candidates: Vec<String> = tag_rows.into_iter().map(|row| row.tag.unwrap_or_default()).collect();
     let mut tag_counts = Vec::with_capacity(tag_candidates.len());
@@ -727,6 +735,7 @@ pub async fn list(
         tenancy.tenant_id.0,
     )
     .fetch_all(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
     let year_candidates: Vec<i32> = year_rows.into_iter().map(|row| row.year.unwrap_or(0)).collect();
     let mut year_counts = Vec::with_capacity(year_candidates.len());
@@ -758,6 +767,7 @@ pub async fn list(
             year,
         )
         .fetch_all(&state.pool)
+        .instrument(tracing::info_span!("db.query"))
         .await?;
         let month_candidates: Vec<i32> = month_rows.into_iter().map(|row| row.month.unwrap_or(0)).collect();
         let mut month_counts = Vec::with_capacity(month_candidates.len());
@@ -792,6 +802,7 @@ pub async fn list(
         tenancy.tenant_id.0,
     )
     .fetch_all(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
     let language_candidates: Vec<String> = language_rows.into_iter().filter_map(|row| row.language).collect();
     let mut language_counts = Vec::with_capacity(language_candidates.len());
@@ -832,6 +843,7 @@ pub async fn list(
         tenancy.tenant_id.0,
     )
     .fetch_all(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
     let doc_type_candidates: Vec<String> = doc_type_rows.into_iter().filter_map(|row| row.doc_type).collect();
     let mut doc_type_counts = Vec::with_capacity(doc_type_candidates.len());
@@ -964,6 +976,7 @@ pub async fn list(
         tenancy.tenant_id.0,
     )
     .fetch_all(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
     let mut collections = Vec::with_capacity(collection_rows.len());
     for row in collection_rows {
@@ -993,6 +1006,7 @@ pub async fn list(
         &expiry_eligible_doc_types(),
     )
     .fetch_all(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
     let today = time::OffsetDateTime::now_utc().date();
     let expiring_documents: Vec<ExpiringDocument> = expiring_rows
@@ -1081,9 +1095,10 @@ pub struct ShowQuery {
 pub async fn show(
     tenancy: TenantContext,
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<DocumentId>,
     Query(query): Query<ShowQuery>,
 ) -> Result<DocumentShowTemplate, AppWebError> {
+    let id = id.0;
     let nav_avatar_url = nav::avatar_url(&state.pool, &state.blob, tenancy.user_id.0).await?;
 
     let row = sqlx::query_as!(
@@ -1097,6 +1112,7 @@ pub async fn show(
         tenancy.tenant_id.0,
     )
     .fetch_optional(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?
     .ok_or(AppWebError::NotFound)?;
 
@@ -1133,6 +1149,7 @@ pub async fn show(
                 crate::highlight::FULL_TEXT_OPTIONS,
             )
             .fetch_one(&state.pool)
+            .instrument(tracing::info_span!("db.query"))
             .await?
             .unwrap_or_default(),
         ),
@@ -1162,6 +1179,7 @@ pub async fn show(
             row.id,
         )
         .fetch_optional(&state.pool)
+        .instrument(tracing::info_span!("db.query"))
         .await?
         .map(|match_row| DuplicateMatch {
             id: match_row.id,
@@ -1231,9 +1249,10 @@ pub struct DocumentMetadataForm {
 pub async fn update(
     tenancy: TenantContext,
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<DocumentId>,
     Form(form): Form<DocumentMetadataForm>,
 ) -> Result<Response, AppWebError> {
+    let id = id.0;
     let result = sqlx::query!(
         "update documents set title = $3, tags = $4, date_issued = $5, language = $6, doc_type = $7, date_expires = $8, updated_at = now()
          where id = $1 and tenant_id = $2",
@@ -1247,6 +1266,7 @@ pub async fn update(
         form.date_expires.into_option(),
     )
     .execute(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     if result.rows_affected() == 0 {
@@ -1265,6 +1285,7 @@ pub async fn update(
 async fn document_exists(state: &AppState, id: Uuid, tenant_id: Uuid) -> Result<bool, AppWebError> {
     let exists = sqlx::query_scalar!("select exists(select 1 from documents where id = $1 and tenant_id = $2)", id, tenant_id)
         .fetch_one(&state.pool)
+        .instrument(tracing::info_span!("db.query"))
         .await?
         .unwrap_or(false);
     Ok(exists)
@@ -1285,8 +1306,9 @@ async fn document_exists(state: &AppState, id: Uuid, tenant_id: Uuid) -> Result<
 pub async fn accept_suggested_date(
     tenancy: TenantContext,
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<DocumentId>,
 ) -> Result<Response, AppWebError> {
+    let id = id.0;
     let result = sqlx::query!(
         "update documents set date_issued = ocr_suggested_date_issued, updated_at = now()
          where id = $1 and tenant_id = $2 and date_issued is null",
@@ -1294,6 +1316,7 @@ pub async fn accept_suggested_date(
         tenancy.tenant_id.0,
     )
     .execute(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     if result.rows_affected() == 0 && !document_exists(&state, id, tenancy.tenant_id.0).await? {
@@ -1311,8 +1334,9 @@ pub async fn accept_suggested_date(
 pub async fn accept_suggested_doc_type(
     tenancy: TenantContext,
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<DocumentId>,
 ) -> Result<Response, AppWebError> {
+    let id = id.0;
     let result = sqlx::query!(
         "update documents set doc_type = ocr_suggested_doc_type, updated_at = now()
          where id = $1 and tenant_id = $2 and doc_type is null",
@@ -1320,6 +1344,7 @@ pub async fn accept_suggested_doc_type(
         tenancy.tenant_id.0,
     )
     .execute(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     if result.rows_affected() == 0 && !document_exists(&state, id, tenancy.tenant_id.0).await? {
@@ -1338,8 +1363,9 @@ pub async fn accept_suggested_doc_type(
 pub async fn accept_suggested_expiry_date(
     tenancy: TenantContext,
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<DocumentId>,
 ) -> Result<Response, AppWebError> {
+    let id = id.0;
     let result = sqlx::query!(
         "update documents set date_expires = ocr_suggested_date_expires, updated_at = now()
          where id = $1 and tenant_id = $2 and date_expires is null",
@@ -1347,6 +1373,7 @@ pub async fn accept_suggested_expiry_date(
         tenancy.tenant_id.0,
     )
     .execute(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     if result.rows_affected() == 0 && !document_exists(&state, id, tenancy.tenant_id.0).await? {
@@ -1377,8 +1404,9 @@ struct ReprocessRow {
 pub async fn reprocess_ocr(
     tenancy: TenantContext,
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<DocumentId>,
 ) -> Result<Response, AppWebError> {
+    let id = id.0;
     let row = sqlx::query_as!(
         ReprocessRow,
         // ELIGIBILITY GUARD: keep this predicate byte-for-byte identical
@@ -1394,6 +1422,7 @@ pub async fn reprocess_ocr(
         tenancy.tenant_id.0,
     )
     .fetch_optional(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     let Some(row) = row else {
@@ -1421,8 +1450,9 @@ struct DocumentSummaryRow {
 pub async fn confirm_delete(
     tenancy: TenantContext,
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<DocumentId>,
 ) -> Result<DocumentDeleteTemplate, AppWebError> {
+    let id = id.0;
     let nav_avatar_url = nav::avatar_url(&state.pool, &state.blob, tenancy.user_id.0).await?;
 
     let row = sqlx::query_as!(
@@ -1432,6 +1462,7 @@ pub async fn confirm_delete(
         tenancy.tenant_id.0,
     )
     .fetch_optional(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?
     .ok_or(AppWebError::NotFound)?;
 
@@ -1473,14 +1504,16 @@ async fn delete_document_blobs(blob: &crate::blob::BlobStore, blob_key: &str) {
 pub async fn delete(
     tenancy: TenantContext,
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<DocumentId>,
 ) -> Result<Response, AppWebError> {
+    let id = id.0;
     let row = sqlx::query!(
         "delete from documents where id = $1 and tenant_id = $2 returning blob_key",
         id,
         tenancy.tenant_id.0,
     )
     .fetch_optional(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?
     .ok_or(AppWebError::NotFound)?;
 
@@ -1536,6 +1569,7 @@ pub async fn bulk_delete_confirm(
         tenancy.tenant_id.0,
     )
     .fetch_all(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     let documents = rows
@@ -1570,6 +1604,7 @@ pub async fn bulk_delete(
         tenancy.tenant_id.0,
     )
     .fetch_all(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     futures_util::future::join_all(rows.iter().map(|row| delete_document_blobs(&state.blob, &row.blob_key))).await;
@@ -1615,6 +1650,7 @@ pub async fn bulk_tag(
             tenancy.tenant_id.0,
         )
         .execute(&state.pool)
+        .instrument(tracing::info_span!("db.query"))
         .await?;
     }
 
@@ -1653,6 +1689,7 @@ pub async fn bulk_reprocess_ocr(
         tenancy.tenant_id.0,
     )
     .fetch_all(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     for row in rows {
@@ -1739,6 +1776,7 @@ async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: 
         tenant_id,
     )
     .execute(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await
     {
         tracing::error!(%error, "failed to mark document as processing");
@@ -1807,6 +1845,7 @@ async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: 
                 suggested_date_expires,
             )
             .execute(&state.pool)
+            .instrument(tracing::info_span!("db.query"))
             .await
         }
         Err(error_message) => {
@@ -1822,6 +1861,7 @@ async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: 
                 content_hash,
             )
             .execute(&state.pool)
+            .instrument(tracing::info_span!("db.query"))
             .await
         }
     };
@@ -1900,6 +1940,7 @@ pub(crate) async fn insert_document_and_queue_ocr(
         content_hash,
     )
     .execute(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     if is_ocr_eligible {
@@ -2035,6 +2076,7 @@ pub async fn save_collection(
         form.query,
     )
     .execute(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     Ok(Redirect::to("/documents").into_response())
@@ -2055,6 +2097,7 @@ pub async fn delete_collection(
         tenancy.tenant_id.0,
     )
     .fetch_optional(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?
     .ok_or(AppWebError::NotFound)?;
 
@@ -2083,6 +2126,7 @@ pub async fn rename_collection(
         form.name.as_str(),
     )
     .fetch_optional(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?
     .ok_or(AppWebError::NotFound)?;
 

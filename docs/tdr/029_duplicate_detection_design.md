@@ -85,12 +85,15 @@ the very first `show()` render:
 - **Reprocess** (`run_ocr`, feature 013's existing background task,
   shared by both a fresh OCR-eligible upload and a manual reprocess):
   already re-fetches the full blob via `get_object` for OCR — the same
-  bytes get hashed there too, unconditionally overwriting `content_hash`
-  on every pass (not `coalesce`d — nothing user-editable can conflict
-  with it, so simply keeping it in sync with the actual blob is both
-  simpler and self-healing). This is what backfills `content_hash` for
-  any document uploaded before this feature shipped, the moment it's
-  next reprocessed for any other reason (AC-7).
+  bytes get hashed there too, written via `content_hash = coalesce($N,
+  content_hash)` in both the success and failure `UPDATE` arms. A
+  successful re-fetch computes a fresh hash and overwrites (self-healing,
+  keeping it in sync with the actual blob — nothing user-editable can
+  conflict with it); a failed re-fetch passes `None` and the `coalesce`
+  preserves whatever hash is already on the row rather than clobbering it
+  with nothing. This is what backfills `content_hash` for any document
+  uploaded before this feature shipped, the moment it's next reprocessed
+  for any other reason (AC-7).
 
 **Lookup**: `show()`, only when `query.uploaded` is `true` and the
 current document's `content_hash` is `Some`, runs one extra query — the

@@ -53,6 +53,7 @@ pub const PDF_CONTENT_TYPE: &str = "application/pdf";
 /// holds those bytes itself and doesn't need them handed back (avoids
 /// cloning the whole upload a second time), and `None` if rasterization
 /// itself never got far enough to produce a page 1.
+#[tracing::instrument(skip(bytes))]
 pub async fn extract(content_type: &str, bytes: &[u8]) -> (Result<String, OcrError>, Option<Vec<u8>>) {
     if content_type == PDF_CONTENT_TYPE {
         extract_text_from_pdf(bytes).await

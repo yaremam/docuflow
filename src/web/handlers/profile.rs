@@ -3,6 +3,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 use tower_sessions::Session;
+use tracing::Instrument;
 
 use crate::web::error::AppWebError;
 use crate::web::forms::ProfileForm;
@@ -34,6 +35,7 @@ pub async fn show(
         tenancy.user_id.0,
     )
     .fetch_one(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await;
 
     let row = match row {
@@ -94,6 +96,7 @@ pub async fn update(
         form.phone.into_option(),
     )
     .execute(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     Ok(Redirect::to("/profile?saved=true").into_response())
@@ -129,6 +132,7 @@ pub async fn upload_picture(
         key,
     )
     .execute(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     Ok(Redirect::to("/profile?saved=true").into_response())

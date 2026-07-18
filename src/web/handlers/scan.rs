@@ -8,6 +8,7 @@
 use axum::extract::{Multipart, Path, Query, State};
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
+use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::pdf_assemble::{self, PageImage};
@@ -62,6 +63,7 @@ async fn mint_and_redirect(state: &AppState, tenancy: TenantContext) -> Result<R
         expires_at,
     )
     .execute(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     Ok(Redirect::to(&format!("/scan?token={}", token.as_str())).into_response())
@@ -94,6 +96,7 @@ pub async fn new_scan(
         tenancy.user_id.0,
     )
     .fetch_optional(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     match row {
@@ -152,6 +155,7 @@ pub async fn show_scan_phone(
         token_hash,
     )
     .fetch_optional(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     let phone_state = match row {
@@ -179,6 +183,7 @@ pub async fn submit_scan(
         token_hash,
     )
     .fetch_optional(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     let Some(row) = row else {
@@ -226,6 +231,7 @@ pub async fn submit_scan(
             file_size_bytes,
         )
         .fetch_one(&state.pool)
+        .instrument(tracing::info_span!("db.query"))
         .await?;
         captured_page_number = Some(page_number);
         break;
@@ -247,6 +253,7 @@ pub async fn submit_scan(
         SCAN_SESSION_TTL_MINUTES as i32,
     )
     .execute(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     Ok(phone_template(ScanPhoneState::Capturing(page_number as i64), &token).into_response())
@@ -269,6 +276,7 @@ pub async fn finish_scan(
         token_hash,
     )
     .fetch_optional(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     let Some(row) = row else {
@@ -289,6 +297,7 @@ pub async fn finish_scan(
         row.id,
     )
     .fetch_all(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     let mut page_images = Vec::with_capacity(pages.len());
@@ -344,6 +353,7 @@ pub async fn finish_scan(
         document_id,
     )
     .execute(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     // Best-effort cleanup: the pages now live inside the document's PDF.

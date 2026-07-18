@@ -3,6 +3,7 @@ use std::sync::Arc;
 use sqlx::PgPool;
 use tokio::sync::Semaphore;
 use tower_sessions::SessionManagerLayer;
+use tracing::Instrument;
 use tower_sessions_sqlx_store::PostgresStore;
 
 use crate::blob::{self, BlobStore};
@@ -92,6 +93,7 @@ pub async fn migrate(pool: &PgPool, session_store: &PostgresStore, blob: &BlobSt
     // one.
     sqlx::query!("update documents set ocr_status = 'pending' where ocr_status = 'processing'")
         .execute(pool)
+        .instrument(tracing::info_span!("db.query"))
         .await?;
 
     // Several test binaries (separate processes) can call this at once on a
@@ -103,10 +105,12 @@ pub async fn migrate(pool: &PgPool, session_store: &PostgresStore, blob: &BlobSt
     let mut conn = pool.acquire().await?;
     sqlx::query!("select pg_advisory_lock($1)", ENSURE_BUCKET_LOCK_KEY)
         .fetch_one(&mut *conn)
+        .instrument(tracing::info_span!("db.query"))
         .await?;
     let ensure_bucket_result = blob.ensure_bucket().await;
     sqlx::query!("select pg_advisory_unlock($1)", ENSURE_BUCKET_LOCK_KEY)
         .fetch_one(&mut *conn)
+        .instrument(tracing::info_span!("db.query"))
         .await?;
     ensure_bucket_result?;
 

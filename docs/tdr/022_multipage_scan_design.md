@@ -131,10 +131,11 @@ on this path by design — the scan entry point now always yields a PDF.
 
 ## 4. OpenTelemetry Implications
 `submit_scan` keeps `skip(state, multipart)`; `finish_scan` takes no
-body but skips `state` and never logs page bytes — downloaded page
-buffers and the assembled PDF stay out of span fields entirely (the
-assembler is *not* `#[instrument]`ed on its byte-carrying arguments,
-only wrapped by the handler span). The raw token stays out of spans as
+body but skips `state` and never logs page bytes. `pdf_assemble::images_to_pdf`
+gets its own `#[tracing::instrument(skip(pages))]` span (matching feature
+008's `ocr::extract(skip(bytes))` precedent) so the PDF-assembly transform
+is trace-visible, while the byte-carrying `pages: &[PageImage]` argument
+itself never appears in a span field. The raw token stays out of spans as
 in 009; `scan_sessions.id`, page numbers, and page counts are the only
 new correlation attributes — none are PII. The spawned OCR task is
 feature 008/010's existing instrumented path, unchanged.

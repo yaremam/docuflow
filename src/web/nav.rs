@@ -3,6 +3,7 @@
 //! since every authenticated page needs it, not just `/profile` itself.
 
 use sqlx::PgPool;
+use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::blob::BlobStore;
@@ -16,6 +17,7 @@ use crate::web::error::AppWebError;
 pub async fn avatar_url(pool: &PgPool, blob: &BlobStore, user_id: Uuid) -> Result<Option<String>, AppWebError> {
     let key = sqlx::query_scalar!("select profile_picture_key from users where id = $1", user_id,)
         .fetch_optional(pool)
+        .instrument(tracing::info_span!("db.query"))
         .await?
         .flatten();
 

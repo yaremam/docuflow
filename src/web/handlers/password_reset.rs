@@ -52,6 +52,7 @@ pub async fn forgot_password_submit(
 ) -> Result<Response, AppWebError> {
     let user = sqlx::query!("select id from users where email = $1", form.email.as_str())
         .fetch_optional(&state.pool)
+        .instrument(tracing::info_span!("db.query"))
         .await?;
 
     // Anti-enumeration (mirrors signup/login): the response is identical
@@ -71,6 +72,7 @@ pub async fn forgot_password_submit(
             expires_at,
         )
         .execute(&state.pool)
+        .instrument(tracing::info_span!("db.query"))
         .await?;
 
         let reset_url = format!(
@@ -143,6 +145,7 @@ async fn find_valid_token(state: &AppState, token_hash: String) -> Result<(), Ap
         token_hash,
     )
     .fetch_optional(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     row.map(|_| ()).ok_or(AppWebError::InvalidResetToken)
@@ -179,6 +182,7 @@ pub async fn reset_password_submit(
         token_hash,
     )
     .fetch_optional(&mut *tx)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     let Some(row) = row else {
@@ -201,6 +205,7 @@ pub async fn reset_password_submit(
         password_hash,
     )
     .execute(&mut *tx)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     sqlx::query!(
@@ -208,6 +213,7 @@ pub async fn reset_password_submit(
         token_hash,
     )
     .execute(&mut *tx)
+    .instrument(tracing::info_span!("db.query"))
     .await?;
 
     tx.commit().await?;
