@@ -515,4 +515,5 @@ gaps:
   (Watchtower/DSM automation is the operator's call); the deploy compose
   ships Mailpit as a mail-catcher placeholder, so password-reset emails
   are viewable at `:8025` but never actually delivered until `SMTP_*`
-  points at a real provider.
+  (including `SMTP_USERNAME`/`SMTP_PASSWORD` for providers that require
+  auth — most do) points at a real provider.

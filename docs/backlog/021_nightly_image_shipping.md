@@ -66,7 +66,8 @@ running.**
   project wants release discipline.
 - **Real-provider SMTP setup.** The deploy compose ships Mailpit as a
   placeholder mail-catcher (reset emails viewable in its UI, not
-  delivered); pointing `SMTP_*` at a real provider is documented but not
-  automated.
+  delivered); pointing `SMTP_*` at a real, authenticated provider is
+  documented (`deploy/.env.example`, `deploy/docker-compose.yml`) but
+  not automated — switching remains a manual `.env` edit.
 - **Serving HTTPS / reverse-proxy config.** DSM's built-in reverse proxy
   (or any other) can front the app; not part of this feature.

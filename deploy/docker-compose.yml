@@ -39,13 +39,22 @@ services:
       AWS_REGION: us-east-1
       BLOB_BUCKET_NAME: docuflow-uploads
       # Mailpit catches password-reset emails (view at http://<host>:8025);
-      # they are NOT delivered anywhere. Point SMTP_* at a real provider —
-      # and drop SMTP_INSECURE, which must never be set for one — to get
-      # real delivery.
-      SMTP_HOST: mailpit
-      SMTP_PORT: "1025"
-      SMTP_FROM: no-reply@docuflow.local
-      SMTP_INSECURE: "true"
+      # they are NOT delivered anywhere by default. To get real delivery,
+      # set SMTP_HOST/SMTP_PORT/SMTP_USERNAME/SMTP_PASSWORD/SMTP_FROM and
+      # SMTP_INSECURE=false in `.env` (see the worked SendGrid example in
+      # `.env.example`) — no edits needed here. SMTP_INSECURE must be
+      # false for any real provider, or the connection is attempted in
+      # plaintext. Port 465 is treated as implicit TLS, any other port
+      # (587 is the common real-provider default) as STARTTLS. Once real
+      # delivery is confirmed working, you can also remove the `mailpit`
+      # service block and MAILPIT_UI_PORT below — nothing references it
+      # anymore.
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-no-reply@docuflow.local}
+      SMTP_INSECURE: ${SMTP_INSECURE:-true}
       # Trace export is off by default (no collector in this stack). If you
       # run an OTLP collector, set OTLP_ENDPOINT to enable it.
     ports:
@@ -88,6 +97,10 @@ services:
       timeout: 3s
       retries: 15
 
+  # Dev-only mail-catcher, the default target of the app's SMTP_* settings
+  # above. Safe to delete this whole block (and MAILPIT_UI_PORT in .env)
+  # once you've switched to a real provider and confirmed delivery works —
+  # nothing else in this file depends on it.
   mailpit:
     image: axllent/mailpit:latest
     restart: unless-stopped
