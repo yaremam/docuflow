@@ -1,3 +1,4 @@
+pub mod amount_extract;
 pub mod blob;
 pub mod content_hash;
 pub mod date_extract;
