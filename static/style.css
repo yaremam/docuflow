@@ -51,6 +51,18 @@
   --stamp-contrast-dark: #0c1712;
   --danger-dark: #e0736c;
 
+  /* Chart-only series colors (feature 032, /spending page). Not a reuse
+     of --stamp: the dataviz skill's categorical-palette validator fails
+     --stamp-light on its own (chroma 0.099, just under the 0.10 floor) —
+     fine for a single accent everywhere else in the app, not safe as one
+     of several competing chart series. These are slots 1 (blue) + 2
+     (green) of the skill's validated default 8-hue palette, adjacent in
+     that fixed order because it clears CVD-separation in both modes. */
+  --series-bill-light: #008300;
+  --series-receipt-light: #2a78d6;
+  --series-bill-dark: #008300;
+  --series-receipt-dark: #3987e5;
+
   --ink: var(--ink-light);
   --ink-soft: var(--ink-soft-light);
   --slate: var(--slate-light);
@@ -60,6 +72,8 @@
   --stamp: var(--stamp-light);
   --stamp-contrast: var(--stamp-contrast-light);
   --danger: var(--danger-light);
+  --series-bill: var(--series-bill-light);
+  --series-receipt: var(--series-receipt-light);
   color-scheme: light;
 }
 
@@ -74,6 +88,8 @@
     --stamp: var(--stamp-dark);
     --stamp-contrast: var(--stamp-contrast-dark);
     --danger: var(--danger-dark);
+    --series-bill: var(--series-bill-dark);
+    --series-receipt: var(--series-receipt-dark);
     color-scheme: dark;
   }
 }
@@ -87,6 +103,8 @@
   --stamp: var(--stamp-dark);
   --stamp-contrast: var(--stamp-contrast-dark);
   --danger: var(--danger-dark);
+  --series-bill: var(--series-bill-dark);
+  --series-receipt: var(--series-receipt-dark);
   color-scheme: dark;
 }
 :root[data-theme="light"] {
@@ -99,6 +117,8 @@
   --stamp: var(--stamp-light);
   --stamp-contrast: var(--stamp-contrast-light);
   --danger: var(--danger-light);
+  --series-bill: var(--series-bill-light);
+  --series-receipt: var(--series-receipt-light);
   color-scheme: light;
 }
 
@@ -1437,3 +1457,95 @@ a { color: inherit; }
   .feature:last-child { border-right: none; }
   .site-footer { padding: 1.4rem 1.75rem; }
 }
+
+/* ---- spending page (feature 032) ---- */
+.spending-page {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 1.75rem 1.25rem 3rem;
+}
+.spending-header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.4rem; }
+.spending-header h1 { font-family: 'Roboto Slab', serif; font-size: 1.5rem; margin: 0 0 0.3rem; }
+.spending-header p { margin: 0; color: var(--slate); font-size: 0.86rem; max-width: 46ch; }
+
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
+.stat-tile { background: var(--paper-raised); border: 1px solid var(--line); border-radius: 8px; padding: 0.9rem 1.1rem; }
+.stat-tile .stat-label { font-family: 'Fira Mono', monospace; font-size: 0.64rem; letter-spacing: 0.07em; text-transform: uppercase; color: var(--slate); display: block; margin-bottom: 0.4rem; }
+.stat-tile .stat-value { font-family: 'Fira Mono', monospace; font-variant-numeric: tabular-nums; font-size: 1.5rem; font-weight: 500; color: var(--ink); }
+.stat-tile .stat-sub { font-size: 0.72rem; color: var(--slate); margin-top: 0.15rem; }
+.stat-tile .stat-sub.is-up { color: var(--danger); }
+.stat-tile .stat-sub.is-down { color: var(--stamp); }
+
+.chart-card { background: var(--paper-raised); border: 1px solid var(--line); border-radius: 8px; padding: 1.5rem 1.5rem 1.1rem; }
+.chart-card-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.1rem; }
+.chart-card-head h2 { font-family: 'Roboto Slab', serif; font-size: 1.02rem; margin: 0; }
+
+.legend { display: flex; gap: 1.1rem; }
+.legend-item { display: flex; align-items: center; gap: 0.45rem; font-family: 'Fira Mono', monospace; font-size: 0.72rem; color: var(--ink-soft); }
+.legend-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+.legend-swatch.bill { background: var(--series-bill); }
+.legend-swatch.receipt { background: var(--series-receipt); }
+
+.chart-plot { display: grid; grid-template-columns: auto 1fr; gap: 0.5rem; }
+.chart-yaxis { display: flex; flex-direction: column; justify-content: space-between; font-family: 'Fira Mono', monospace; font-size: 0.68rem; color: var(--slate); text-align: right; padding: 0.2rem 0 1.9rem; }
+.chart-yaxis span { transform: translateY(-50%); }
+.chart-yaxis span:last-child { transform: translateY(0); }
+
+.chart-bars {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: clamp(4px, 1.4vw, 14px);
+  height: 220px;
+  padding-bottom: 1.9rem;
+  border-bottom: 1px solid var(--line);
+  background-image: repeating-linear-gradient(to top, var(--line) 0, var(--line) 1px, transparent 1px, transparent 25%);
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+}
+.bar-col { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; position: relative; }
+.bar-stack {
+  width: 100%; max-width: 24px; display: flex; flex-direction: column-reverse;
+  border-radius: 4px 4px 0 0; overflow: hidden; cursor: pointer;
+}
+.bar-seg { width: 100%; }
+.bar-seg.bill { background: var(--series-bill); }
+.bar-seg.receipt { background: var(--series-receipt); border-bottom: 2px solid var(--paper-raised); }
+.bar-col-label { position: absolute; bottom: -1.55rem; font-family: 'Fira Mono', monospace; font-size: 0.64rem; color: var(--slate); white-space: nowrap; }
+.bar-col-total {
+  position: absolute; font-family: 'Fira Mono', monospace; font-size: 0.66rem; font-weight: 500; color: var(--ink);
+  white-space: nowrap; opacity: 0; transition: opacity 120ms ease;
+}
+.bar-col.is-max .bar-col-total, .bar-col:hover .bar-col-total, .bar-col:focus-within .bar-col-total { opacity: 1; }
+.bar-col:hover .bar-stack, .bar-col:focus-within .bar-stack { outline: 2px solid var(--ink-soft); outline-offset: 1px; }
+
+.chart-tooltip {
+  position: absolute; pointer-events: none; background: var(--ink); color: var(--paper-raised);
+  font-family: 'Fira Mono', monospace; font-size: 0.68rem; line-height: 1.5; padding: 0.5rem 0.65rem;
+  border-radius: 4px; white-space: nowrap; opacity: 0; transition: opacity 100ms ease; z-index: 5;
+  transform: translate(-50%, -100%); top: -8px; left: 50%;
+}
+.bar-col:hover .chart-tooltip, .bar-col:focus-within .chart-tooltip { opacity: 1; }
+.chart-tooltip .tt-row { display: flex; align-items: center; gap: 0.4rem; }
+.chart-tooltip .tt-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.chart-tooltip .tt-dot.bill { background: var(--series-bill-dark); }
+.chart-tooltip .tt-dot.receipt { background: var(--series-receipt-dark); }
+.chart-tooltip .tt-total { border-top: 1px solid rgba(255, 255, 255, 0.2); margin-top: 0.3rem; padding-top: 0.3rem; font-weight: 700; }
+
+.chart-table-toggle { margin-top: 0.9rem; text-align: right; }
+.chart-table-toggle summary {
+  font-family: 'Fira Mono', monospace; font-size: 0.7rem; letter-spacing: 0.03em; color: var(--slate);
+  cursor: pointer; display: inline-block;
+}
+.chart-table-toggle summary:hover { color: var(--ink); }
+.chart-table-toggle summary:focus-visible { outline: 2px solid var(--stamp); outline-offset: 2px; }
+.chart-table {
+  width: 100%; border-collapse: collapse; margin-top: 0.9rem; font-size: 0.78rem; text-align: left;
+}
+.chart-table th, .chart-table td { text-align: right; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--line); font-family: 'Fira Mono', monospace; font-variant-numeric: tabular-nums; }
+.chart-table th:first-child, .chart-table td:first-child { text-align: left; font-family: 'Fira Sans', sans-serif; }
+.chart-table thead th { color: var(--slate); font-weight: 400; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; }
+
+.scope-note { display: flex; gap: 0.6rem; align-items: flex-start; margin-top: 1.1rem; padding: 0.75rem 0.9rem; background: color-mix(in srgb, var(--slate) 8%, transparent); border-radius: 6px; }
+.scope-note svg { width: 15px; height: 15px; color: var(--slate); flex-shrink: 0; margin-top: 0.15rem; }
+.scope-note p { margin: 0; font-size: 0.76rem; color: var(--ink-soft); line-height: 1.5; }

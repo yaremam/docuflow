@@ -56,6 +56,7 @@ pub fn app(state: AppState, session_layer: SessionManagerLayer<PostgresStore>) -
             post(handlers::documents::bulk_delete),
         )
         .route("/documents/bulk/tag", post(handlers::documents::bulk_tag))
+        .route("/spending", get(handlers::spending::show))
         .route(
             "/documents/bulk/reprocess_ocr",
             post(handlers::documents::bulk_reprocess_ocr),

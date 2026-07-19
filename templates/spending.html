@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block title %}Spending — DocuFlow{% endblock %}
+
+{% block content %}
+<div class="spending-page">
+  <div class="spending-header">
+    <div>
+      <h1>Spending</h1>
+      <p>Confirmed amounts from your bills and receipts, by month. Documents without a confirmed amount aren't counted.</p>
+    </div>
+  </div>
+
+  {% if is_empty %}
+  <div class="empty-state">
+    <h3>No confirmed amounts yet</h3>
+    <p>Once you confirm an amount on a bill or receipt &mdash; accepting a suggestion or typing it in &mdash; it'll show up here.</p>
+  </div>
+  {% else %}
+  <div class="stat-row">
+    <div class="stat-tile">
+      <span class="stat-label">Total, last 12 mo</span>
+      <span class="stat-value">{{ total_display }}</span>
+    </div>
+    <div class="stat-tile">
+      <span class="stat-label">This month</span>
+      <span class="stat-value">{{ this_month_display }}</span>
+      {% if let Some(mom) = month_over_month %}
+      <div class="stat-sub{% if mom.is_up %} is-up{% else %} is-down{% endif %}">
+        {% if mom.is_up %}&uarr;{% else %}&darr;{% endif %} {{ mom.pct_display }}% vs. last month
+      </div>
+      {% endif %}
+    </div>
+    <div class="stat-tile">
+      <span class="stat-label">Monthly average</span>
+      <span class="stat-value">{{ monthly_average_display }}</span>
+    </div>
+  </div>
+
+  <div class="chart-card">
+    <div class="chart-card-head">
+      <h2>Spend by month</h2>
+      <div class="legend">
+        <span class="legend-item"><span class="legend-swatch bill"></span>Bill</span>
+        <span class="legend-item"><span class="legend-swatch receipt"></span>Receipt</span>
+      </div>
+    </div>
+
+    <div class="chart-plot">
+      <div class="chart-yaxis">
+        {% for label in y_axis_labels %}
+        <span>{{ label }}</span>
+        {% endfor %}
+      </div>
+      <div class="chart-bars">
+        {% for month in months %}
+        <div class="bar-col{% if month.is_max %} is-max{% endif %}" tabindex="0">
+          <span class="bar-col-total" style="bottom: calc({{ month.total_pct }}% + 6px);">{{ month.total_display }}</span>
+          <div class="bar-stack" style="height: {{ month.total_pct }}%;">
+            <div class="bar-seg bill" style="height: {{ month.bill_pct_of_bar }}%;"></div>
+            <div class="bar-seg receipt" style="height: {{ month.receipt_pct_of_bar }}%;"></div>
+          </div>
+          <span class="bar-col-label">{{ month.label }}</span>
+          <div class="chart-tooltip">
+            <div class="tt-row"><span class="tt-dot bill"></span>Bill&nbsp;{{ month.bill_display }}</div>
+            <div class="tt-row"><span class="tt-dot receipt"></span>Receipt&nbsp;{{ month.receipt_display }}</div>
+            <div class="tt-total">Total&nbsp;{{ month.total_display }}</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <details class="chart-table-toggle">
+      <summary>View as table</summary>
+      <table class="chart-table">
+        <thead><tr><th>Month</th><th>Bill</th><th>Receipt</th><th>Total</th></tr></thead>
+        <tbody>
+          {% for month in months %}
+          <tr><td>{{ month.label }}</td><td>{{ month.bill_display }}</td><td>{{ month.receipt_display }}</td><td>{{ month.total_display }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </details>
+
+    <div class="scope-note">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 16v-4M12 8h.01"></path></svg>
+      <p>Figures are unitless &mdash; DocuFlow doesn't track currency yet, so if your bills span more than one, this total mixes them. Only documents with a confirmed amount count; accept or edit a suggested amount on a document's page to include it here.</p>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

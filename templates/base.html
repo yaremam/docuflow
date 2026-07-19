@@ -26,6 +26,7 @@
     </button>
     {% if authenticated %}
     <a class="tab{% if active_tab == "documents" %} is-primary{% endif %}" href="/documents">Documents</a>
+    <a class="tab{% if active_tab == "spending" %} is-primary{% endif %}" href="/spending">Spending</a>
     <a class="avatar-link{% if active_tab == "profile" %} is-current{% endif %}" href="/profile" aria-label="Profile" title="Profile">
       <span class="avatar-circle">
         {% if let Some(url) = nav_avatar_url %}

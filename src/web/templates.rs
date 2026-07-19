@@ -303,6 +303,56 @@ pub struct DuplicateMatch {
     pub uploaded_at: String,
 }
 
+/// One bar's worth of data for the /spending chart (feature 032) — a
+/// single calendar month's confirmed bill/receipt spend, plus the
+/// pre-computed bar-height percentages the template renders directly as
+/// inline `style` heights (Askama has no arithmetic in its expressions,
+/// so percentages are computed once in the handler rather than per
+/// render in the template).
+pub struct SpendingMonth {
+    pub label: String,
+    pub bill_display: String,
+    pub receipt_display: String,
+    pub total_display: String,
+    /// Height of this month's whole stacked bar, as a percent of the
+    /// chart's y-axis max.
+    pub total_pct: f64,
+    /// Height of the bill segment, as a percent of the *bar's own*
+    /// height (not the chart max) — this is what `column-reverse` flex
+    /// children need to split a bar whose own height already varies.
+    pub bill_pct_of_bar: f64,
+    pub receipt_pct_of_bar: f64,
+    pub is_max: bool,
+}
+
+/// "Up 12% vs. last month" — `None` when last month had no confirmed
+/// spend to compare against (division by zero has no meaningful percent).
+pub struct MonthOverMonth {
+    pub is_up: bool,
+    pub pct_display: String,
+}
+
+#[derive(askama::Template, askama_web::WebTemplate)]
+#[template(path = "spending.html")]
+pub struct SpendingTemplate {
+    pub active_tab: &'static str,
+    pub authenticated: bool,
+    pub nav_avatar_url: Option<String>,
+    /// `true` when no document anywhere has a confirmed `amount` yet —
+    /// the whole chart card is replaced by an empty state rather than a
+    /// chart with nothing on it.
+    pub is_empty: bool,
+    pub months: Vec<SpendingMonth>,
+    pub total_display: String,
+    pub this_month_display: String,
+    pub monthly_average_display: String,
+    pub month_over_month: Option<MonthOverMonth>,
+    /// Y-axis gridline labels, top to bottom (e.g. `["600", "450",
+    /// "300", "150", "0"]`) — 5 labels, evenly spaced from 0 to the
+    /// chart's rounded-up max.
+    pub y_axis_labels: Vec<String>,
+}
+
 /// One row in the dashboard's "expiring soon" strip (feature 031) —
 /// computed from the tenant's full expiry-eligible set regardless of
 /// whatever facets/search are currently active on the results below it

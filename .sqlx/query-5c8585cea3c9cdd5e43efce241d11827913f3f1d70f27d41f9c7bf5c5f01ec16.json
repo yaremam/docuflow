@@ -1,0 +1,42 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select extract(year from date_issued)::int4 as \"year!\", extract(month from date_issued)::int4 as \"month!\",\n                  doc_type as \"doc_type!\", sum(amount)::bigint as \"total_cents!\"\n           from documents\n           where tenant_id = $1\n             and doc_type = any($2)\n             and amount is not null\n             and date_issued is not null\n             and date_issued >= $3\n           group by 1, 2, 3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "year!",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "month!",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "doc_type!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "total_cents!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "TextArray",
+        "Date"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      true,
+      null
+    ]
+  },
+  "hash": "5c8585cea3c9cdd5e43efce241d11827913f3f1d70f27d41f9c7bf5c5f01ec16"
+}
