@@ -264,14 +264,20 @@ async fn an_exif_capture_date_is_suggested_when_ocr_text_has_no_recognizable_dat
 }
 
 /// Real-OCR, real-fixture coverage for feature 030's non-English month
-/// names — reuses feature 020's language-detection fixtures rather than
-/// inventing new ones. Unlike the fixture above (whose embedded date is
-/// known and asserted exactly), these fixtures' exact OCR'd text isn't
-/// verifiable in an environment without the `deu`/`nld`/`ukr` tesseract
-/// packs installed (this sandbox has none of them), so these assert only
-/// that *some* date was recognized — proof the non-English month-name
-/// path fired at all — not a specific value. The precise-value unit
-/// tests in `src/date_extract.rs` are what pin down exact correctness.
+/// names. These use dedicated fixtures (`{lang}_date_sample.png`), not
+/// feature 020's language-detection fixtures (`{lang}_sample.png`) —
+/// those only ever contained language-identifying filler text ("this is
+/// a test file for automatic language detection"), never a date, so
+/// asserting a date suggestion against them could never have passed.
+/// That mismatch shipped undetected because the environment these tests
+/// were originally written in had none of the `deu`/`nld`/`ukr`
+/// tesseract packs installed, so it was never actually exercised — only
+/// caught once a real CI run with those packs got far enough to run it
+/// for real (see feature 032's CI investigation). Verified against a
+/// real `deu+nld+ukr`-equipped `tesseract` (the app's own Docker image)
+/// before landing, and asserts the exact recognized date, not just
+/// "some date was found" — same precise-value style the fixture above
+/// uses.
 #[tokio::test]
 async fn german_text_can_produce_a_date_suggestion() {
     if !tesseract_available() {
@@ -287,15 +293,17 @@ async fn german_text_can_produce_a_date_suggestion() {
     let uploaded = common::upload_and_wait_for_ocr(
         &app,
         "germandate.docs@example.com",
-        "tests/fixtures/german_sample.png",
-        "german_sample.png",
+        "tests/fixtures/german_date_sample.png",
+        "german_date_sample.png",
         "image/png",
     )
     .await;
     assert_eq!(uploaded.outcome.status, "done");
-    assert!(
-        uploaded.outcome.suggested_date_issued.is_some(),
-        "expected a German month name in the fixture's OCR'd text to produce a date suggestion"
+    assert_eq!(
+        uploaded.outcome.suggested_date_issued,
+        Some(time::Date::from_calendar_date(2024, time::Month::January, 15).unwrap()),
+        "expected the fixture's printed German date to be recognized, got: {:?}",
+        uploaded.outcome.suggested_date_issued
     );
 }
 
@@ -314,15 +322,17 @@ async fn dutch_text_can_produce_a_date_suggestion() {
     let uploaded = common::upload_and_wait_for_ocr(
         &app,
         "dutchdate.docs@example.com",
-        "tests/fixtures/dutch_sample.png",
-        "dutch_sample.png",
+        "tests/fixtures/dutch_date_sample.png",
+        "dutch_date_sample.png",
         "image/png",
     )
     .await;
     assert_eq!(uploaded.outcome.status, "done");
-    assert!(
-        uploaded.outcome.suggested_date_issued.is_some(),
-        "expected a Dutch month name in the fixture's OCR'd text to produce a date suggestion"
+    assert_eq!(
+        uploaded.outcome.suggested_date_issued,
+        Some(time::Date::from_calendar_date(2024, time::Month::March, 15).unwrap()),
+        "expected the fixture's printed Dutch date to be recognized, got: {:?}",
+        uploaded.outcome.suggested_date_issued
     );
 }
 
@@ -341,15 +351,17 @@ async fn ukrainian_text_can_produce_a_date_suggestion() {
     let uploaded = common::upload_and_wait_for_ocr(
         &app,
         "ukrainiandate.docs@example.com",
-        "tests/fixtures/ukrainian_sample.png",
-        "ukrainian_sample.png",
+        "tests/fixtures/ukrainian_date_sample.png",
+        "ukrainian_date_sample.png",
         "image/png",
     )
     .await;
     assert_eq!(uploaded.outcome.status, "done");
-    assert!(
-        uploaded.outcome.suggested_date_issued.is_some(),
-        "expected a Ukrainian genitive month name in the fixture's OCR'd text to produce a date suggestion"
+    assert_eq!(
+        uploaded.outcome.suggested_date_issued,
+        Some(time::Date::from_calendar_date(2024, time::Month::January, 15).unwrap()),
+        "expected the fixture's printed Ukrainian genitive date to be recognized, got: {:?}",
+        uploaded.outcome.suggested_date_issued
     );
 }
 
