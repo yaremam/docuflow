@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select date_expires from documents where id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "date_expires",
+        "type_info": "Date"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "16730b726b0d31e5b99835f1997ff7bbc7322938a5591b383cfff4c8a56dd6d6"
+}

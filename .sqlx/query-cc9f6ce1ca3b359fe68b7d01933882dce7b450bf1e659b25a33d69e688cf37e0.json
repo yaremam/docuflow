@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select ocr_suggested_date_expires from documents where id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ocr_suggested_date_expires",
+        "type_info": "Date"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "cc9f6ce1ca3b359fe68b7d01933882dce7b450bf1e659b25a33d69e688cf37e0"
+}

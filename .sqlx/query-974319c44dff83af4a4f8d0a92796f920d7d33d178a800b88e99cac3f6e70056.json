@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update documents set doc_type = $1, date_expires = $2 where id = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Date",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "974319c44dff83af4a4f8d0a92796f920d7d33d178a800b88e99cac3f6e70056"
+}

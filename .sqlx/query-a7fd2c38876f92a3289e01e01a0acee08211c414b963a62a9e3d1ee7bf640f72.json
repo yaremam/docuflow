@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select content_hash from documents where id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "content_hash",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "a7fd2c38876f92a3289e01e01a0acee08211c414b963a62a9e3d1ee7bf640f72"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update scan_sessions set status = 'captured' where token_hash = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "14e7fa790e013d23d1050178b30a1663f80e26e6c95a2e1f04760dc26b3bb16b"
+}

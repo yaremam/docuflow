@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into documents\n            (id, tenant_id, user_id, original_filename, content_type, file_size_bytes, blob_key, tags, ocr_status, doc_type, date_expires)\n         values ($1, $2, $2, $3, 'application/pdf', 100, $4, '{}', 'done', $5, $6)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Date"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "645337ceb5d4b7072d233603acc573aec9b0d4286f0bc1a353d59de29772b83c"
+}
