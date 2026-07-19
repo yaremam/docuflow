@@ -81,6 +81,10 @@ pub fn app(state: AppState, session_layer: SessionManagerLayer<PostgresStore>) -
             post(handlers::documents::accept_suggested_expiry_date),
         )
         .route(
+            "/documents/:id/accept_suggested_amount",
+            post(handlers::documents::accept_suggested_amount),
+        )
+        .route(
             "/documents/:id/reprocess_ocr",
             post(handlers::documents::reprocess_ocr),
         )

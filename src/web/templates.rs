@@ -285,6 +285,14 @@ pub struct DocumentShowTemplate {
     /// Same "only when unset" rule as `suggested_date_issued_display`
     /// (feature 031, mirroring TDR 012).
     pub suggested_date_expires_display: Option<String>,
+    /// Whether the *confirmed* `doc_type` represents a single spend —
+    /// gates the Amount field's visibility entirely, mirroring
+    /// `is_expiry_eligible` (feature 032).
+    pub is_amount_eligible: bool,
+    pub amount_input_value: String,
+    /// Same "only when unset" rule as `suggested_date_expires_display`
+    /// (feature 032).
+    pub suggested_amount_display: Option<String>,
 }
 
 /// The oldest earlier document sharing this one's exact content hash —

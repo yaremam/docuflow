@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select id, title, original_filename, content_type, file_size_bytes, blob_key, tags, date_issued,\n                  ocr_suggested_date_issued, ocr_status, ocr_text, language, doc_type, ocr_suggested_doc_type,\n                  created_at, content_hash, date_expires, ocr_suggested_date_expires\n           from documents\n           where id = $1 and tenant_id = $2",
+  "query": "select id, title, original_filename, content_type, file_size_bytes, blob_key, tags, date_issued,\n                  ocr_suggested_date_issued, ocr_status, ocr_text, language, doc_type, ocr_suggested_doc_type,\n                  created_at, content_hash, date_expires, ocr_suggested_date_expires, amount, ocr_suggested_amount\n           from documents\n           where id = $1 and tenant_id = $2",
   "describe": {
     "columns": [
       {
@@ -92,6 +92,16 @@
         "ordinal": 17,
         "name": "ocr_suggested_date_expires",
         "type_info": "Date"
+      },
+      {
+        "ordinal": 18,
+        "name": "amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 19,
+        "name": "ocr_suggested_amount",
+        "type_info": "Int8"
       }
     ],
     "parameters": {
@@ -118,8 +128,10 @@
       false,
       true,
       true,
+      true,
+      true,
       true
     ]
   },
-  "hash": "69c672ba579d5e10198d0272f405d58db3c8bbd1b9920feee6ab4a4225488ec7"
+  "hash": "fc4abda23c51220e2320c0fafc3f81504ba1378c1c4239f09755d65c9ca8daf5"
 }

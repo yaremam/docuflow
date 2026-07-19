@@ -21,7 +21,7 @@ use uuid::Uuid;
 use crate::domain::DocumentId;
 use crate::web::error::AppWebError;
 use crate::web::facets::{assemble_facet_options, ActiveFilters};
-use crate::web::forms::{CollectionName, DateExpiresField, DateIssuedField, DocTypeField, Language, ProfileField, Tags};
+use crate::web::forms::{AmountField, CollectionName, DateExpiresField, DateIssuedField, DocTypeField, Language, ProfileField, Tags};
 use crate::web::nav;
 use crate::web::state::AppState;
 use crate::web::tenancy::TenantContext;
@@ -60,6 +60,13 @@ fn ocr_eligible(content_type: &str) -> bool {
 
 fn format_date(date: time::Date) -> String {
     format!("{:04}-{:02}-{:02}", date.year(), date.month() as u8, date.day())
+}
+
+/// Integer cents back to a plain decimal string for an
+/// `<input type="number" step="0.01">`'s `value` attribute, e.g. `4500` ->
+/// `"45.00"` (feature 032).
+fn format_cents(cents: i64) -> String {
+    format!("{}.{:02}", cents / 100, cents % 100)
 }
 
 /// The derived blob key a document's generated thumbnail (feature 025) is
@@ -1070,6 +1077,8 @@ struct DocumentRow {
     content_hash: Option<String>,
     date_expires: Option<time::Date>,
     ocr_suggested_date_expires: Option<time::Date>,
+    amount: Option<i64>,
+    ocr_suggested_amount: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1105,7 +1114,7 @@ pub async fn show(
         DocumentRow,
         r#"select id, title, original_filename, content_type, file_size_bytes, blob_key, tags, date_issued,
                   ocr_suggested_date_issued, ocr_status, ocr_text, language, doc_type, ocr_suggested_doc_type,
-                  created_at, content_hash, date_expires, ocr_suggested_date_expires
+                  created_at, content_hash, date_expires, ocr_suggested_date_expires, amount, ocr_suggested_amount
            from documents
            where id = $1 and tenant_id = $2"#,
         id,
@@ -1133,6 +1142,11 @@ pub async fn show(
     let is_expiry_eligible = row.doc_type.as_deref().is_some_and(crate::doc_type_extract::is_expiry_eligible);
     let suggested_date_expires_display =
         if row.date_expires.is_none() { row.ocr_suggested_date_expires.map(format_date) } else { None };
+    // Gates both the Amount field's visibility and its suggestion box —
+    // the *confirmed* doc_type only, mirroring is_expiry_eligible above
+    // (feature 032).
+    let is_amount_eligible = row.doc_type.as_deref().is_some_and(crate::doc_type_extract::is_amount_eligible);
+    let suggested_amount_display = if row.amount.is_none() { row.ocr_suggested_amount.map(format_cents) } else { None };
 
     // A `ts_headline` round-trip only when there's both text to search and
     // a search to run — with no `q`, this is just `row.ocr_text` again, so
@@ -1220,6 +1234,9 @@ pub async fn show(
         is_expiry_eligible,
         date_expires_input_value: row.date_expires.map(format_date).unwrap_or_default(),
         suggested_date_expires_display,
+        is_amount_eligible,
+        amount_input_value: row.amount.map(format_cents).unwrap_or_default(),
+        suggested_amount_display,
     })
 }
 
@@ -1243,6 +1260,11 @@ pub struct DocumentMetadataForm {
     /// this form.
     #[serde(default)]
     pub date_expires: DateExpiresField,
+    /// Not cross-validated against `doc_type` here either — same
+    /// low-stakes, tenant-scoped judgment as `date_expires` above
+    /// (feature 032).
+    #[serde(default)]
+    pub amount: AmountField,
 }
 
 #[tracing::instrument(skip(state, tenancy, form))]
@@ -1254,7 +1276,8 @@ pub async fn update(
 ) -> Result<Response, AppWebError> {
     let id = id.0;
     let result = sqlx::query!(
-        "update documents set title = $3, tags = $4, date_issued = $5, language = $6, doc_type = $7, date_expires = $8, updated_at = now()
+        "update documents set title = $3, tags = $4, date_issued = $5, language = $6, doc_type = $7, date_expires = $8,
+                amount = $9, updated_at = now()
          where id = $1 and tenant_id = $2",
         id,
         tenancy.tenant_id.0,
@@ -1264,6 +1287,7 @@ pub async fn update(
         form.language.into_option(),
         form.doc_type.into_option(),
         form.date_expires.into_option(),
+        form.amount.into_option(),
     )
     .execute(&state.pool)
     .instrument(tracing::info_span!("db.query"))
@@ -1369,6 +1393,34 @@ pub async fn accept_suggested_expiry_date(
     let result = sqlx::query!(
         "update documents set date_expires = ocr_suggested_date_expires, updated_at = now()
          where id = $1 and tenant_id = $2 and date_expires is null",
+        id,
+        tenancy.tenant_id.0,
+    )
+    .execute(&state.pool)
+    .instrument(tracing::info_span!("db.query"))
+    .await?;
+
+    if result.rows_affected() == 0 && !document_exists(&state, id, tenancy.tenant_id.0).await? {
+        return Err(AppWebError::NotFound);
+    }
+
+    Ok(Redirect::to(&format!("/documents/{id}?saved=true")).into_response())
+}
+
+/// Copies `ocr_suggested_amount` into `amount` — the "Use this amount"
+/// action from the suggestion box `show` renders (feature 032, same
+/// idiom as `accept_suggested_expiry_date` above, including why the
+/// existence check only runs as a fallback on the 0-rows-affected path).
+#[tracing::instrument(skip(state, tenancy))]
+pub async fn accept_suggested_amount(
+    tenancy: TenantContext,
+    State(state): State<AppState>,
+    Path(id): Path<DocumentId>,
+) -> Result<Response, AppWebError> {
+    let id = id.0;
+    let result = sqlx::query!(
+        "update documents set amount = ocr_suggested_amount, updated_at = now()
+         where id = $1 and tenant_id = $2 and amount is null",
         id,
         tenancy.tenant_id.0,
     )
@@ -1829,10 +1881,17 @@ async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: 
             let language = crate::language_detect::detect(&text);
             let suggested_doc_type = crate::doc_type_extract::extract_doc_type(&text).map(|dt| dt.as_str());
             let suggested_date_expires = crate::expiry_extract::extract_expiry_date(&text);
+            // Extracted unconditionally, like suggested_date_expires above
+            // — eligibility (bill/receipt only) is gated at accept/display
+            // time via is_amount_eligible on the *confirmed* doc_type, not
+            // here against this pass's own not-yet-confirmed suggestion
+            // (feature 032).
+            let suggested_amount = crate::amount_extract::extract_amount(&text, language.as_deref());
             sqlx::query!(
                 "update documents set ocr_status = 'done', ocr_text = $3, ocr_suggested_date_issued = $4,
                         language = coalesce(language, $5), ocr_suggested_doc_type = $6, thumbnail_status = $7,
-                        content_hash = coalesce($8, content_hash), ocr_suggested_date_expires = $9
+                        content_hash = coalesce($8, content_hash), ocr_suggested_date_expires = $9,
+                        ocr_suggested_amount = $10
                  where id = $1 and tenant_id = $2",
                 document_id,
                 tenant_id,
@@ -1843,6 +1902,7 @@ async fn run_ocr(state: AppState, document_id: Uuid, tenant_id: Uuid, blob_key: 
                 thumbnail_status,
                 content_hash,
                 suggested_date_expires,
+                suggested_amount,
             )
             .execute(&state.pool)
             .instrument(tracing::info_span!("db.query"))

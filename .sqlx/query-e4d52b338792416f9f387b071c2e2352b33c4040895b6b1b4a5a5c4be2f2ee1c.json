@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update documents set amount = ocr_suggested_amount, updated_at = now()\n         where id = $1 and tenant_id = $2 and amount is null",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e4d52b338792416f9f387b071c2e2352b33c4040895b6b1b4a5a5c4be2f2ee1c"
+}

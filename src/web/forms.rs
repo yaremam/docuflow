@@ -426,6 +426,56 @@ impl DateExpiresField {
     }
 }
 
+/// A document's confirmed payment amount (feature 032), submitted via
+/// `<input type="number" step="0.01">` as a plain decimal string (`"45"`,
+/// `"45.5"`, `"45.00"`). Stored as integer cents, never a float — same
+/// "no business accumulating floating-point rounding error" rule
+/// `amount_extract` follows for the OCR-suggested side of this field.
+/// Blank clears the field, mirroring every other optional field's
+/// convention on this form.
+#[derive(Debug, Default, Clone, serde::Deserialize)]
+#[serde(try_from = "String")]
+pub struct AmountField(Option<i64>);
+
+#[derive(Debug, thiserror::Error)]
+#[error("amount must be blank or a non-negative number with up to 2 decimal places")]
+pub struct AmountFieldError;
+
+impl TryFrom<String> for AmountField {
+    type Error = AmountFieldError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Ok(Self(None));
+        }
+
+        let (whole_str, cents_str) = match trimmed.split_once('.') {
+            Some((whole, cents)) => (whole, Some(cents)),
+            None => (trimmed, None),
+        };
+        let whole: i64 = whole_str.parse().map_err(|_| AmountFieldError)?;
+        let cents: i64 = match cents_str {
+            Some(c) if c.len() == 1 => c.parse::<i64>().map_err(|_| AmountFieldError)? * 10,
+            Some(c) if c.len() == 2 => c.parse().map_err(|_| AmountFieldError)?,
+            Some(_) => return Err(AmountFieldError),
+            None => 0,
+        };
+        let total = whole.checked_mul(100).and_then(|w| w.checked_add(cents)).ok_or(AmountFieldError)?;
+        if total < 0 {
+            return Err(AmountFieldError);
+        }
+
+        Ok(Self(Some(total)))
+    }
+}
+
+impl AmountField {
+    pub fn into_option(self) -> Option<i64> {
+        self.0
+    }
+}
+
 /// A document's language — any real ISO 639-1 code (see `crate::languages`), not just
 /// the four `ocr::run_tesseract` can actually OCR (feature 020 generalizes feature 014's
 /// closed `en`/`cyr` script-bucket vocabulary). `""` clears the field, mirroring

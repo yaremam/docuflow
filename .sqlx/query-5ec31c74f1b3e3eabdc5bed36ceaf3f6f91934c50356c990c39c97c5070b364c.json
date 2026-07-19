@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select amount from documents where id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "amount",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "5ec31c74f1b3e3eabdc5bed36ceaf3f6f91934c50356c990c39c97c5070b364c"
+}

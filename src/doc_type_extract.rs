@@ -116,6 +116,21 @@ pub fn is_expiry_eligible(value: &str) -> bool {
     EXPIRY_ELIGIBLE_DOC_TYPES.contains(&value)
 }
 
+/// The `doc_type` values that represent a single purchase/payment —
+/// `bill` and `receipt` are unambiguous "this document is one spend"
+/// documents; `insurance`/`contract` premiums are a recurring cost, a
+/// different concept that would double-count against the bill that
+/// actually pays for it, so they're deliberately excluded (feature 032).
+pub const AMOUNT_ELIGIBLE_DOC_TYPES: &[&str] = &["bill", "receipt"];
+
+/// Whether a *confirmed* `doc_type` is one of `AMOUNT_ELIGIBLE_DOC_TYPES`.
+/// Deliberately takes the confirmed `doc_type` column's value, never
+/// `ocr_suggested_doc_type` — mirrors `is_expiry_eligible`'s confirmed-only
+/// gating rule (TDR 031 §3, AC-1).
+pub fn is_amount_eligible(value: &str) -> bool {
+    AMOUNT_ELIGIBLE_DOC_TYPES.contains(&value)
+}
+
 const KEYWORDS: &[(DocType, &[&str])] = &[
     (
         DocType::Id,
@@ -253,5 +268,24 @@ mod tests {
     #[test]
     fn an_unrecognized_value_is_not_expiry_eligible() {
         assert!(!is_expiry_eligible("not-a-real-doc-type"));
+    }
+
+    #[test]
+    fn bill_and_receipt_are_amount_eligible() {
+        assert!(is_amount_eligible("bill"));
+        assert!(is_amount_eligible("receipt"));
+    }
+
+    #[test]
+    fn insurance_contract_id_and_other_are_not_amount_eligible() {
+        assert!(!is_amount_eligible("insurance"));
+        assert!(!is_amount_eligible("contract"));
+        assert!(!is_amount_eligible("id"));
+        assert!(!is_amount_eligible("other"));
+    }
+
+    #[test]
+    fn an_unrecognized_value_is_not_amount_eligible() {
+        assert!(!is_amount_eligible("not-a-real-doc-type"));
     }
 }

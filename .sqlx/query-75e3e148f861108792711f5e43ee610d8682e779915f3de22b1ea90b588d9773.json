@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update documents set ocr_status = 'done', ocr_text = $3, ocr_suggested_date_issued = $4,\n                        language = coalesce(language, $5), ocr_suggested_doc_type = $6, thumbnail_status = $7,\n                        content_hash = coalesce($8, content_hash), ocr_suggested_date_expires = $9,\n                        ocr_suggested_amount = $10\n                 where id = $1 and tenant_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Date",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Date",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "75e3e148f861108792711f5e43ee610d8682e779915f3de22b1ea90b588d9773"
+}
